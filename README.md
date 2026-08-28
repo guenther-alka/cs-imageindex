@@ -92,22 +92,25 @@ representative frame is extracted and run through the same face/vision/
 quality pipeline as a still image, and container metadata (creation
 date, duration, and GPS — including the ISO-6709 location tag iPhone/
 QuickTime `.mov` files use) is read the same way EXIF is for photos.
-The release archives bundle a minimal static LGPL `ffmpeg`/`ffprobe`
-next to the binary (built from source by `ci/build-ffmpeg.sh`), so video
-indexing works out of the box. As a fallback, `ffmpeg`/`ffprobe` on
-`PATH` is used if the bundled copies are removed; if neither is found,
-video files are skipped with a one-line note printed at startup, and
-everything else still runs normally.
+HEIC/HEIF photos are decoded the same way — via the bundled `ffmpeg`.
 
-Single static binary for the still-image and RAW paths, no runtime to
-install. Face detection/recognition
-(YuNet + SFace, both ONNX) runs through [`tract`](https://github.com/sonos/tract)
-(pure Rust, no OpenCV/cgo/onnxruntime dependency) — the exact detection and
-alignment math is a from-scratch port of OpenCV's own upstream C++
-(`face_detect.cpp` / `face_recognize.cpp`), not a black box. `tags`/`ocr_text`/
-`description` come from a single vision-LLM call per photo (no extra API
-calls); `blur_score`/`phash`/`is_screenshot` are computed locally with no
-network and no extra dependencies.
+Single static binary plus a bundled minimal static LGPL
+`ffmpeg`/`ffprobe` (built from source by `ci/build-ffmpeg.sh`, next to the
+binary) covers every input format — still images, RAW, HEIC/HEIF and
+video — with no runtime to install and no system library dependency. Face
+detection/recognition (YuNet + SFace, both ONNX) runs through
+[`tract`](https://github.com/sonos/tract) (pure Rust, no
+OpenCV/cgo/onnxruntime dependency) — the exact detection and alignment
+math is a from-scratch port of OpenCV's own upstream C++
+(`face_detect.cpp` / `face_recognize.cpp`), not a black box.
+`tags`/`ocr_text`/`description` come from a single vision-LLM call per
+media file (no extra API calls); `blur_score`/`phash`/`is_screenshot` are
+computed locally with no network and no extra dependencies.
+
+As a fallback, `ffmpeg`/`ffprobe` on `PATH` is used if the bundled copies
+are removed; if neither is found, HEIC/HEIF and video files are skipped
+with a one-line note printed at startup, and everything else still runs
+normally.
 
 Reverse geocoding uses the public Nominatim API and respects its usage
 policy (~1 request/second, descriptive User-Agent, and an in-process cache
@@ -115,9 +118,9 @@ keyed to ~1km so repeat lookups near the same spot don't re-hit the
 network) — disable with `--no-geocode` if you'd rather not make that
 network call at all.
 
-Photos are processed on a small worker-thread pool (`--threads`, default up
-to 4) — EXIF/quality/face-detection work runs in parallel, and vision/
-geocode network calls are safely shared across threads (geocoding is
+Media files are processed on a small worker-thread pool (`--threads`,
+default up to 4) — EXIF/quality/face-detection work runs in parallel, and
+vision/geocode network calls are safely shared across threads (geocoding is
 globally rate-limited regardless of thread count; each thread gets its own
 vision API connection). Interrupted a big run? `--resume` picks up where an
 existing `--out` CSV left off instead of starting over.
