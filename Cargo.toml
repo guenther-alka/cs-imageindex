@@ -3,7 +3,7 @@ name = "cs-imageindex"
 version = "0.1.0"
 edition = "2021"
 description = "Index a folder of photos: EXIF date/GPS, an LLM scene description, and face recognition against reference photos -- single static binary."
-license = "MIT"
+license = "BSD-2-Clause"
 
 [[bin]]
 name = "cs-imageindex"

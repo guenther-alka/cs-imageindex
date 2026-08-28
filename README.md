@@ -47,18 +47,78 @@ cs-imageindex --folder /path/to/photos --out index.csv \
     --legacy-cfg /path/to/cs-aihelp.cfg
 ```
 
-Vision-LLM provider/model/API key can come from (highest priority first):
-CLI flags (`--provider/--endpoint/--model/--api-key`), environment variables
-(`CS_IMAGEINDEX_PROVIDER/_ENDPOINT/_MODEL/_API_KEY/_MAX_TOKENS`), an own
-config file (`--config`, run `--print-config-example` for the format), or as
-a last resort `--legacy-cfg` pointing at an existing napp-it CS
-`cs-aihelp.cfg` (reads its `endpoint2/model2/api_key2` slot). A local Ollama
-instance can be used instead via `--ollama <endpoint>`. If nothing resolves,
-vision is silently skipped (same as `--no-vision`) — location and face
-matching still run.
+### All options
+
+```
+Options:
+      --folder <FOLDER>              Folder to index (scanned recursively)
+      --out <OUT>                    Output CSV path
+      --refdir <REFDIR>              reference/<Name>/*.jpg folder for face matching
+                                      (omit = no person recognition, "people" column
+                                      left empty)
+      --models-dir <MODELS_DIR>      Directory containing yunet.onnx and sface.onnx
+                                      (default: next to this binary, in a "models"
+                                      subfolder)
+      --config <CONFIG>              Own standalone config file (provider/endpoint/
+                                      model/api_key) -- see --print-config-example
+      --legacy-cfg <LEGACY_CFG>      Legacy fallback: read endpoint2/model2/api_key2
+                                      from an existing napp-it cs-aihelp.cfg (used only
+                                      if --config / env vars / CLI don't already
+                                      resolve a usable endpoint+model)
+      --provider <PROVIDER>          Vision provider, informational only
+                                      ("openai-compatible" | "ollama")
+      --endpoint <ENDPOINT>          Vision API endpoint, e.g.
+                                      https://api.deepseek.com/chat/completions
+      --model <MODEL>                Vision model name, e.g.
+                                      deepseek-v4-flash-vision-exp
+      --api-key <API_KEY>            Vision API key
+      --ollama <OLLAMA>              Use a local Ollama endpoint instead of a cloud
+                                      provider, e.g. http://127.0.0.1:11434
+      --ollama-model <OLLAMA_MODEL>  Ollama model name [default: llama3.2-vision]
+      --no-vision                    Skip the scene-description step entirely
+                                      (location + faces only)
+      --no-geocode                   Skip reverse-geocoding GPS coordinates to a place
+                                      name (no network calls to the public Nominatim/
+                                      OpenStreetMap API)
+      --print-config-example         Print an example --config file and exit
+  -h, --help                         Print help
+  -V, --version                      Print version
+```
+
+`--provider`/`--endpoint`/`--model`/`--api-key` (CLI flags) take priority
+over the `CS_IMAGEINDEX_PROVIDER`/`_ENDPOINT`/`_MODEL`/`_API_KEY`/
+`_MAX_TOKENS` environment variables, which take priority over `--config`
+(own config file, format via `--print-config-example`), which takes priority
+over `--legacy-cfg` (fallback only, used solely if nothing else resolved a
+usable endpoint+model). If nothing resolves at all, vision is silently
+skipped (same as `--no-vision`) — location, faces, and the local-only
+metadata columns still run.
 
 `--refdir` expects `<refdir>/<Name>/*.jpg` — one or more reference photos per
-person. `--models-dir` must contain `yunet.onnx` and `sface.onnx`.
+person. `--models-dir` must contain `yunet.onnx` and `sface.onnx` (bundled
+in this repo, see Models below).
+
+### Examples
+
+```
+# Local Ollama instead of a cloud provider
+cs-imageindex --folder ./photos --out index.csv \
+    --ollama http://127.0.0.1:11434 --ollama-model llama3.2-vision
+
+# Own standalone config file
+cs-imageindex --print-config-example > cs-imageindex.cfg
+# edit cs-imageindex.cfg, then:
+cs-imageindex --folder ./photos --out index.csv --config cs-imageindex.cfg
+
+# No network calls at all (EXIF + faces only, no vision, no geocoding)
+cs-imageindex --folder ./photos --out index.csv --no-vision --no-geocode
+
+# Direct CLI credentials, no config file
+cs-imageindex --folder ./photos --out index.csv \
+    --provider openai-compatible \
+    --endpoint https://api.deepseek.com/chat/completions \
+    --model deepseek-v4-flash-vision-exp --api-key sk-...
+```
 
 ## Models
 
@@ -84,4 +144,5 @@ napp-it CS `howto.ai/cs-imageindex.info` doc for the full background.
 
 ## License
 
-MIT
+BSD 2-Clause — same as napp-it CS's other standalone tools (cs-sync,
+cs-send, cs-freeze4snap, cs-sleeper, cs-aihelp). See `LICENSE`.
