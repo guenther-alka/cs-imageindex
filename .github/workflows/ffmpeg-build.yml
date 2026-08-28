@@ -28,8 +28,9 @@ jobs:
             artifact: cs-imageindex-ffmpeg-mswin.amd64
           - os: macos-latest
             artifact: cs-imageindex-ffmpeg-darwin.arm64
-          - os: macos-13
+          - os: macos-latest
             artifact: cs-imageindex-ffmpeg-darwin.amd64
+            ff_target_arch: x86_64
 
     runs-on: ${{ matrix.os }}
 
@@ -65,6 +66,8 @@ jobs:
 
       - name: Build ffmpeg bundle (Linux/macOS)
         if: runner.os != 'Windows'
+        env:
+          FFMPEG_TARGET_ARCH: ${{ matrix.ff_target_arch }}
         run: |
           rm -rf /tmp/ffdist
           bash ci/build-ffmpeg.sh /tmp/ffdist

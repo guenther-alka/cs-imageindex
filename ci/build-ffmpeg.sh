@@ -47,16 +47,26 @@ tar -xf ffmpeg.tar.xz
 cd "ffmpeg-${FFMPEG_VERSION}"
 
 # ---- configure: minimal static LGPL build ----------------------------------
-CC_FLAGS=""
-case "$HOST" in
-  windows) CC_FLAGS="--cc=x86_64-w64-mingw32-gcc" ;;
-  darwin)  CC_FLAGS="--cc=clang" ;;
-  linux)   CC_FLAGS="--cc=gcc" ;;
-esac
+# compiler / target selection. FFMPEG_TARGET_ARCH overrides the arch -- used
+# to cross-compile darwin amd64 from an arm64 host (e.g. the macos-latest
+# runner): clang -arch x86_64 produces a fat/x86_64 binary that cannot run
+# on the arm64 host, so --enable-cross-compile skips the configure run-tests.
+CFG_CC=()
+if [ "$HOST" = windows ]; then
+    CFG_CC+=(--cc=x86_64-w64-mingw32-gcc)
+elif [ "$HOST" = darwin ] && [ "${FFMPEG_TARGET_ARCH:-}" = x86_64 ]; then
+    CFG_CC+=(--enable-cross-compile --target-os=darwin --arch=x86_64 \
+             --cc="clang -arch x86_64" --extra-cflags="-arch x86_64" \
+             --extra-ldflags="-arch x86_64")
+elif [ "$HOST" = darwin ]; then
+    CFG_CC+=(--cc=clang)
+else
+    CFG_CC+=(--cc=gcc)
+fi
 
 ./configure \
   --prefix="$WORK/out" \
-  $CC_FLAGS \
+  "${CFG_CC[@]}" \
   --disable-shared --enable-static \
   --disable-programs --enable-ffmpeg --enable-ffprobe \
   --disable-avdevice --disable-network \

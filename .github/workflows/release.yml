@@ -46,10 +46,11 @@ jobs:
             bin: cs-imageindex
             ffp: darwin
             ffa: arm64
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: cs-imageindex-darwin.amd64
             bin: cs-imageindex
+            cross: true
             ffp: darwin
             ffa: amd64
 
