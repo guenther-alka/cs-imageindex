@@ -57,7 +57,16 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build (release)
-        run: cargo build --release --target ${{ matrix.target }}
+        # --no-default-features disables the "heic" cargo feature here: it
+        # links the system libheif C library via pkg-config (>= 1.23), which
+        # none of the GitHub-hosted runner images provide out of the box.
+        # RAW photo support (pure Rust) and video support (external ffmpeg,
+        # not linked) are unaffected. HEIC/HEIF files are simply skipped like
+        # any other unreadable file in these CI-built binaries -- HEIC is
+        # fully supported in the hand-built illumos binary (which does have
+        # libheif installed, see illumos/cs-imageindex_omnios_1a.sh) and in
+        # any binary a user builds themselves with libheif >= 1.23 present.
+        run: cargo build --release --target ${{ matrix.target }} --no-default-features
 
       - name: Package
         shell: bash
@@ -101,9 +110,15 @@ jobs:
           generate_release_notes: true
           body: |
             Prebuilt binaries for Linux, Windows and macOS (arm64 + x86_64),
-            built automatically by this workflow.
+            built automatically by this workflow. These builds support still
+            images, RAW photos, and video (given ffmpeg on PATH), but NOT
+            HEIC/HEIF -- the GitHub-hosted runners don't provide a system
+            libheif >= 1.23, so these binaries are built with
+            --no-default-features. Build from source with libheif installed
+            for HEIC support on these platforms.
 
             illumos/OmniOS is NOT built by CI (GitHub Actions has no runner
             for illumos) -- built manually via
             illumos/cs-imageindex_omnios_1a.sh and uploaded to this release
-            separately when available.
+            separately when available. The illumos binary DOES include full
+            HEIC/HEIF support.

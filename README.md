@@ -67,10 +67,16 @@ libraries required.
 **HEIC/HEIF (v0.3):** `.heic`, `.heif` (the default photo format on
 recent iPhones) — decoded via the system `libheif` C library (the
 `heic` cargo feature, on by default). Embedded rotation/mirroring/
-cropping is applied automatically. Requires `libheif` to be present on
-the machine the binary runs on (see platform notes below); if it isn't,
-HEIC/HEIF files are skipped like any other unreadable file rather than
-failing the whole run.
+cropping is applied automatically. Requires `libheif` >= 1.23 to be
+present at *build* time (it's linked, not loaded dynamically at
+runtime by choice) — the prebuilt Linux/Windows/macOS binaries from
+this repo's GitHub Releases are built with `--no-default-features`
+because the GitHub-hosted CI runners don't ship a new enough libheif,
+so HEIC support is off in those specific downloads. The illumos binary
+and any binary you build yourself with libheif installed DO have it.
+Where the feature is compiled in but `libheif` genuinely isn't
+resolvable, HEIC/HEIF files are skipped like any other unreadable file
+rather than failing the whole run.
 
 **Video (v0.3):** `.mp4`, `.mov`, `.avi`, `.m4v`, `.mkv` — one
 representative frame is extracted and run through the same face/vision/
