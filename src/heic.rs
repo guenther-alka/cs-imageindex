@@ -141,9 +141,13 @@ unsafe fn decode_with_ctx(
         HEIF_CHROMA_INTERLEAVED_RGB,
         std::ptr::null(),
     );
+    // capture error fields BEFORE any further libheif call (error messages may
+    // point into per-context buffers that later calls can overwrite)
+    let (ec, esc, em) = (err.code, err.subcode, err_text(&err));
     handle_release(handle);
-    if err.code != 0 || img.is_null() {
-        return Err(format!("HEIC decode: {}", err_text(&err)));
+    if ec != 0 || img.is_null() {
+        eprintln!("[heic-debug] decode err code={ec} subcode={esc} img_null={} msg={em}", img.is_null());
+        return Err(format!("HEIC decode: {em}"));
     }
 
     let iw = image_width(img, HEIF_CHANNEL_INTERLEAVED);
