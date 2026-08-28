@@ -14,7 +14,7 @@ pub type Model = TypedRunnableModel<TypedModel>;
 
 const YUNET_SIZE: usize = 640;
 const SFACE_SIZE: usize = 112;
-const SCORE_THRESHOLD: f32 = 0.9; // OpenCV's FaceDetectorYN default
+const SCORE_THRESHOLD: f32 = 0.3; // TEMP-DEBUG lowered from 0.9 to diagnose the reference-photo miss
 const NMS_THRESHOLD: f32 = 0.3; // OpenCV's FaceDetectorYN default
 const STRIDES: [usize; 3] = [8, 16, 32];
 // Standard 112x112 ArcFace/SFace alignment template (OpenCV
@@ -28,15 +28,56 @@ const ARCFACE_TEMPLATE: [(f32, f32); 5] = [
     (70.7299, 92.2041),
 ];
 
+/// Read the EXIF Orientation tag (1-8), defaulting to 1 (normal) if absent
+/// or unreadable.
+fn read_exif_orientation(path: &Path) -> u32 {
+    let Ok(file) = std::fs::File::open(path) else { return 1 };
+    let mut bufreader = std::io::BufReader::new(file);
+    let Ok(exifreader) = exif::Reader::new().read_from_container(&mut bufreader) else {
+        return 1;
+    };
+    exifreader
+        .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+        .and_then(|f| f.value.get_uint(0))
+        .unwrap_or(1)
+}
+
+/// Apply the standard EXIF orientation transform (values 1-8) so pixel data
+/// matches how the photo is actually meant to be viewed. The `image` crate
+/// does NOT do this automatically on decode -- without it, any photo with a
+/// non-1 orientation tag (extremely common on phone photos, e.g. portrait
+/// shots or ones taken upside-down) is fed to YuNet rotated, and a rotated-
+/// too-far face detector input can simply fail to find a face at all
+/// (observed on a real 9248x6936 phone photo with orientation=3/180 degrees,
+/// cs_26.08.28 -- 0 faces detected before this fix, 1 correctly detected and
+/// matched after).
+fn apply_exif_orientation(img: DynamicImage, orientation: u32) -> DynamicImage {
+    match orientation {
+        2 => img.fliph(),
+        3 => img.rotate180(),
+        4 => img.flipv(),
+        5 => img.rotate90().fliph(),
+        6 => img.rotate90(),
+        7 => img.rotate270().fliph(),
+        8 => img.rotate270(),
+        _ => img,
+    }
+}
+
 /// Open an image by sniffing its actual content, not its file extension.
 /// `image::open()` picks the decoder from the path's extension, which
 /// silently fails (and gets swallowed by callers' `let Ok(..) else continue`)
 /// on a mislabeled file -- e.g. a "referenzphoto.jpg" that is actually PNG
 /// data (observed on a real user-supplied reference photo, cs_26.08.28).
+/// Also corrects EXIF orientation (see apply_exif_orientation above) --
+/// without both fixes, a real phone photo can silently fail to yield any
+/// face at all for reasons that have nothing to do with detection quality.
 pub fn open_image(path: &Path) -> image::ImageResult<DynamicImage> {
     let reader = image::ImageReader::open(path).map_err(image::ImageError::IoError)?;
     let reader = reader.with_guessed_format().map_err(image::ImageError::IoError)?;
-    reader.decode()
+    let img = reader.decode()?;
+    let orientation = read_exif_orientation(path);
+    Ok(apply_exif_orientation(img, orientation))
 }
 
 pub fn load_model(path: &str) -> TractResult<Model> {
@@ -340,8 +381,17 @@ pub fn load_reference_people(refdir: &str, yunet: &Model, sface: &Model) -> Vec<
                 if !["jpg", "jpeg", "png", "bmp"].contains(&ext.to_lowercase().as_str()) {
                     continue;
                 }
-                let Ok(img) = open_image(&p) else { continue };
-                let Ok(dets) = detect_faces(&img, yunet) else { continue };
+                let img = match open_image(&p) {
+                    Ok(im) => im,
+                    Err(e) => { eprintln!("    [debug] {}: open failed: {e}", p.display()); continue; }
+                };
+                eprintln!("    [debug] {}: {}x{}", p.display(), img.width(), img.height());
+                let dets = match detect_faces(&img, yunet) {
+                    Ok(d) => d,
+                    Err(e) => { eprintln!("    [debug] {}: detect_faces failed: {e}", p.display()); continue; }
+                };
+                eprintln!("    [debug] {}: {} candidate(s), best score = {:?}", p.display(), dets.len(),
+                    dets.iter().map(|d| d.score).fold(None, |m: Option<f32>, s| Some(m.map_or(s, |m| m.max(s)))));
                 if let Some(best) = dets.iter().max_by(|a, b| a.score.partial_cmp(&b.score).unwrap()) {
                     let aligned = align_crop(&img, &best.landmarks);
                     if let Ok(emb) = embed(&aligned, sface) {
