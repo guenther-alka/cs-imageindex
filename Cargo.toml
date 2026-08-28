@@ -30,7 +30,7 @@ csv = "1"
 rayon = "1"
 rawloader = "0.37.2"
 imagepipe = "0.5.1"
-libloading = "0.8"
+libloading = { version = "0.8", optional = true }
 
 [profile.release]
 opt-level = 3
