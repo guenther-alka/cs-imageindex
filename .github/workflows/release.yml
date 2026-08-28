@@ -58,16 +58,12 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build (release)
-        # --no-default-features disables the "heic" cargo feature here: it
-        # links the system libheif C library via pkg-config (>= 1.23), which
-        # none of the GitHub-hosted runner images provide out of the box.
-        # RAW photo support (pure Rust) and video support (external ffmpeg,
-        # not linked) are unaffected. HEIC/HEIF files are simply skipped like
-        # any other unreadable file in these CI-built binaries -- HEIC is
-        # fully supported in the hand-built illumos binary (which does have
-        # libheif installed, see illumos/cs-imageindex_omnios_1a.sh) and in
-        # any binary a user builds themselves with libheif >= 1.23 present.
-        run: cargo build --release --target ${{ matrix.target }} --no-default-features
+        # Default features include the "heic" feature, which decodes HEIC/HEIF
+        # via the system libheif loaded lazily at runtime (dlopen/LoadLibrary,
+        # libloading crate -- no build-time system dependency). HEIC works on
+        # any machine that has libheif installed and is skipped otherwise.
+        # RAW (pure Rust) and video (bundled ffmpeg) are unaffected.
+        run: cargo build --release --target ${{ matrix.target }}
 
       # ---- build + bundle a minimal static LGPL ffmpeg/ffprobe into dist/ --
       # one self-contained archive per platform (same as the illumos build).
@@ -144,10 +140,10 @@ jobs:
             images, RAW photos, and video -- a minimal static LGPL
             ffmpeg/ffprobe is bundled in each archive (built from source by
             ci/build-ffmpeg.sh), so video indexing works out of the box.
-            HEIC/HEIF is NOT supported in these CI builds -- the GitHub-hosted
-            runners don't provide a system libheif >= 1.23, so the binaries
-            are built with --no-default-features. Build from source with
-            libheif installed for HEIC support on these platforms.
+            HEIC/HEIF is decoded via the system libheif C library, loaded
+            lazily at runtime (no build-time dependency): it works on machines
+            that have libheif installed (e.g. apt/brew) and HEIC/HEIF files
+            are skipped otherwise.
 
             illumos/OmniOS is NOT built by CI (GitHub Actions has no runner
             for illumos) -- built manually via

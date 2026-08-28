@@ -3,6 +3,8 @@ mod dedup;
 mod exif_read;
 mod face;
 mod geocode;
+#[cfg(feature = "heic")]
+mod heic;
 mod media;
 mod quality;
 mod vision;

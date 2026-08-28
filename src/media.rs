@@ -5,12 +5,11 @@
 //   - RAW photos (CR2/CR3/NEF/ARW/DNG/ORF/RW2/RAF/PEF/SRW): decoded via
 //     rawloader + imagepipe, both pure Rust -- no system libraw/dcraw
 //     dependency, keeps the "single static binary" property intact.
-//   - HEIC/HEIF: decoded via libheif-rs, which links the system `libheif`
-//     C library -- NOT pure Rust, gated behind the `heic` Cargo feature
-//     (on by default) so a platform where libheif isn't available/buildable
-//     (e.g. possibly illumos) can simply build without it: HEIC files are
-//     then skipped like any other unreadable file instead of failing the
-//     whole build.
+//   - HEIC/HEIF: decoded via the system `libheif` C library, loaded lazily
+//     at runtime (dlopen/LoadLibrary -- see the `heic` module); no build-time
+//     system dependency, gated behind the `heic` Cargo feature (on by
+//     default). If libheif is missing at runtime, HEIC files are skipped like
+//     any other unreadable file instead of failing the whole run.
 //   - Video (MP4/MOV/AVI/M4V/MKV): a representative frame is extracted via
 //     an external `ffmpeg` binary (shelled out to, not linked) and container
 //     metadata (creation time, duration, GPS if present) via `ffprobe`.
@@ -90,32 +89,12 @@ pub fn open_raw(path: &Path) -> Result<DynamicImage, String> {
         .ok_or_else(|| "RAW decode: pixel buffer/size mismatch".to_string())
 }
 
-/// Decode a HEIC/HEIF photo via libheif (system C library -- see module
-/// doc comment). Compiled out entirely without the `heic` feature.
+/// Decode a HEIC/HEIF photo via the system libheif C library, loaded lazily
+/// at runtime (see the `heic` module). Compiled out entirely without the
+/// `heic` feature.
 #[cfg(feature = "heic")]
 pub fn open_heic(path: &Path) -> Result<DynamicImage, String> {
-    use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
-
-    let path_str = path.to_str().ok_or("HEIC: non-UTF-8 path")?;
-    let ctx = HeifContext::read_from_file(path_str).map_err(|e| format!("HEIC open: {e}"))?;
-    let handle = ctx.primary_image_handle().map_err(|e| format!("HEIC handle: {e}"))?;
-    let lib_heif = LibHeif::new();
-    // decode() also applies any rotation/mirroring/cropping baked into the
-    // HEIF file, same role EXIF-orientation handling plays for JPEG.
-    let heif_image = lib_heif
-        .decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), None)
-        .map_err(|e| format!("HEIC decode: {e}"))?;
-    let planes = heif_image.planes();
-    let plane = planes.interleaved.ok_or("HEIC: no interleaved RGB plane")?;
-    let (width, height, stride) = (plane.width as usize, plane.height as usize, plane.stride);
-    let mut data = Vec::with_capacity(width * height * 3);
-    for y in 0..height {
-        let row_start = y * stride;
-        data.extend_from_slice(&plane.data[row_start..row_start + width * 3]);
-    }
-    image::RgbImage::from_raw(width as u32, height as u32, data)
-        .map(DynamicImage::ImageRgb8)
-        .ok_or_else(|| "HEIC decode: pixel buffer/size mismatch".to_string())
+    crate::heic::open_heic(path)
 }
 
 #[cfg(not(feature = "heic"))]
