@@ -38,11 +38,12 @@ person. `--models-dir` must contain `yunet.onnx` and `sface.onnx`.
 
 ## Models
 
-Not included in this repo (binary/license reasons) — get them from the
-OpenCV Zoo:
-
-- https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
-- https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
+`models/yunet.onnx` and `models/sface.onnx` are bundled in this repo,
+taken as-is from the [OpenCV Zoo](https://github.com/opencv/opencv_zoo)
+(`face_detection_yunet` and `face_recognition_sface`). Both are
+redistributable under their own permissive licenses — see
+`models/LICENSE-yunet.txt` (MIT, Shiqi Yu) and `models/LICENSE-sface.txt`
+(Apache 2.0) — kept alongside the model files per their attribution terms.
 
 ## Building on illumos/OmniOS
 
