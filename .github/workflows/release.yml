@@ -32,34 +32,22 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: cs-imageindex-linux.amd64
             bin: cs-imageindex
-            ffp: linux
-            ffa: amd64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: cs-imageindex-mswin.amd64
             bin: cs-imageindex.exe
-            ffp: mswin
-            ffa: amd64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: cs-imageindex-darwin.arm64
             bin: cs-imageindex
-            ffp: darwin
-            ffa: arm64
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: cs-imageindex-darwin.amd64
             bin: cs-imageindex
             cross: true
-            ffp: darwin
-            ffa: amd64
+            ff_target_arch: x86_64
 
     runs-on: ${{ matrix.os }}
-    env:
-      # tag whose release carries the prebuilt ffmpeg/ffprobe assets
-      # (cs-imageindex-ffmpeg-<platform>.<arch>.tar.gz, built once by
-      # .github/workflows/ffmpeg-build.yml)
-      FFMPEG_ASSET_TAG: v0.3.0
 
     steps:
       - uses: actions/checkout@v4
@@ -81,15 +69,37 @@ jobs:
         # any binary a user builds themselves with libheif >= 1.23 present.
         run: cargo build --release --target ${{ matrix.target }} --no-default-features
 
-      # ---- bundle the prebuilt static LGPL ffmpeg/ffprobe into dist/ -------
-      # (built once by .github/workflows/ffmpeg-build.yml, stored on the
-      # FFMPEG_ASSET_TAG release as cs-imageindex-ffmpeg-<platform>.<arch>.tar.gz)
-      - name: Bundle ffmpeg (prebuilt LGPL asset)
+      # ---- build + bundle a minimal static LGPL ffmpeg/ffprobe into dist/ --
+      # one self-contained archive per platform (same as the illumos build).
+      # ci/build-ffmpeg.sh; FFMPEG_TARGET_ARCH cross-compiles the darwin
+      # amd64 build from the arm64 macos-latest runner.
+      - name: Setup MSYS2 (Windows ffmpeg toolchain)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-nasm
+            make
+
+      - name: Install ffmpeg build deps (Linux)
+        if: runner.os == 'Linux'
         run: |
-          set -e
-          mkdir -p dist
-          curl -sSL "https://github.com/guenther-alka/cs-imageindex/releases/download/${FFMPEG_ASSET_TAG}/cs-imageindex-ffmpeg-${{ matrix.ffp }}.${{ matrix.ffa }}.tar.gz" -o /tmp/ffmpeg-bundle.tar.gz
-          tar -xzf /tmp/ffmpeg-bundle.tar.gz -C dist
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Build ffmpeg (Windows/MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash ci/build-ffmpeg.sh dist
+
+      - name: Build ffmpeg (Linux/macOS)
+        if: runner.os != 'Windows'
+        env:
+          FFMPEG_TARGET_ARCH: ${{ matrix.ff_target_arch }}
+        run: bash ci/build-ffmpeg.sh dist
 
       - name: Package
         shell: bash
