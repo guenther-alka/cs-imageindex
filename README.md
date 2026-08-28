@@ -78,6 +78,13 @@ Where the feature is compiled in but `libheif` genuinely isn't
 resolvable, HEIC/HEIF files are skipped like any other unreadable file
 rather than failing the whole run.
 
+**Planned for v0.4:** add a `libheif` install step to `release.yml` for
+the Linux and macOS CI jobs (`apt install libheif-dev` /
+`brew install libheif`) so those two prebuilt binaries get HEIC support
+without the user having to build from source — Windows is out of scope
+for this since there's no ready `libheif` package for MSVC (would need
+a vcpkg-based build). Not yet implemented.
+
 **Video (v0.3):** `.mp4`, `.mov`, `.avi`, `.m4v`, `.mkv` — one
 representative frame is extracted and run through the same face/vision/
 quality pipeline as a still image, and container metadata (creation
