@@ -59,16 +59,23 @@ cd "ffmpeg-${FFMPEG_VERSION}"
 # on the arm64 host, so --enable-cross-compile skips the configure run-tests.
 CFG_CC=()
 if [ "$HOST" = windows ]; then
-    CFG_CC+=(--cc=x86_64-w64-mingw32-gcc)
+    # fully static MinGW link: the produced ffmpeg.exe must not depend on the
+    # MinGW runtime DLLs (libgcc_s_seh-1.dll / libwinpthread-1.dll / ...),
+    # otherwise it dies with STATUS_DLL_NOT_FOUND on a plain Windows box.
+    CFG_CC+=(--cc=x86_64-w64-mingw32-gcc --extra-ldflags=-static)
 elif [ "$HOST" = darwin ] && [ "${FFMPEG_TARGET_ARCH:-}" = x86_64 ]; then
     # cross-compile x86_64 from an arm64 host (macos-latest runner): canonical
     # recipe is --cc=clang with -arch in cflags/ldflags; --enable-cross-compile
     # makes configure skip running the (unrunnable) x86_64 test programs.
+    # --disable-videotoolbox + an old deployment target keep the binary runnable
+    # on older macOS (newer SDKs pull in VideoToolbox symbols macOS 12 lacks).
+    export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
     CFG_CC+=(--enable-cross-compile --target-os=darwin --arch=x86_64 \
              --cc=clang --extra-cflags="-arch x86_64" --extra-ldflags="-arch x86_64" \
-             --disable-x86asm)
+             --disable-x86asm --disable-videotoolbox)
 elif [ "$HOST" = darwin ]; then
-    CFG_CC+=(--cc=clang)
+    export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+    CFG_CC+=(--cc=clang --disable-videotoolbox)
 else
     CFG_CC+=(--cc=gcc)
 fi
