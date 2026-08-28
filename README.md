@@ -1,5 +1,29 @@
 # cs-imageindex
 
+## Project concept
+
+Suggested folder layout, e.g.:
+
+```
+/tank/images
+/tank/images/data/*         (originals)
+/tank/images/index          (search index, e.g. index.csv)
+/tank/images/selections/*   (e.g. selections/selection_1 -- images linked
+                              from the "Image selections" menu)
+```
+
+Images/videos picked into a selection are collected in that folder and
+directly reachable there, without touching or duplicating the originals.
+
+Workflow:
+
+1. Index all images and videos as a napp-it CS job (restartable, skips
+   already-indexed images -- see `--resume` below).
+2. Build a selection from the index (creates a folder of links to the
+   matching images; originals are never modified).
+
+## What it does
+
 Index a folder of photos and write one CSV row per image with:
 
 - `date_taken` — EXIF `DateTimeOriginal`
