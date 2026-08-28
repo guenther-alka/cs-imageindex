@@ -2,12 +2,12 @@
 
 Index a folder of photos and write one CSV row per image with:
 
-- `aufnahmedatum` — EXIF `DateTimeOriginal`
+- `date_taken` — EXIF `DateTimeOriginal`
 - `gps_lat` / `gps_lon` — EXIF GPS, decimal degrees (empty if the photo has none)
-- `beschreibung` — a one-sentence scene description from a vision-capable LLM
+- `description` — a one-sentence scene description from a vision-capable LLM
   (indoor/outdoor, type of place, what's happening)
-- `personen` — comma-separated names matched against reference photos
-- `unbekannte_gesichter` — count of detected-but-unmatched faces
+- `people` — comma-separated names matched against reference photos
+- `unknown_faces` — count of detected-but-unmatched faces
 
 Single static binary, no runtime to install. Face detection/recognition
 (YuNet + SFace, both ONNX) runs through [`tract`](https://github.com/sonos/tract)

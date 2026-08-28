@@ -26,7 +26,7 @@ struct Args {
     out: PathBuf,
 
     /// reference/<Name>/*.jpg folder for face matching (omit = no person
-    /// recognition, "personen" column left empty)
+    /// recognition, "people" column left empty)
     #[arg(long, default_value = "")]
     refdir: String,
 
@@ -186,7 +186,7 @@ fn main() {
 
     let out_file = std::fs::File::create(&args.out).expect("cannot create output CSV");
     let mut w = csv::Writer::from_writer(out_file);
-    w.write_record(["datei", "aufnahmedatum", "gps_lat", "gps_lon", "personen", "unbekannte_gesichter", "beschreibung"])
+    w.write_record(["file", "date_taken", "gps_lat", "gps_lon", "people", "unknown_faces", "description"])
         .unwrap();
 
     for (i, path) in files.iter().enumerate() {
