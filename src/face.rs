@@ -14,7 +14,7 @@ pub type Model = TypedRunnableModel<TypedModel>;
 
 const YUNET_SIZE: usize = 640;
 const SFACE_SIZE: usize = 112;
-const SCORE_THRESHOLD: f32 = 0.3; // TEMP-DEBUG lowered from 0.9 to diagnose the reference-photo miss
+const SCORE_THRESHOLD: f32 = 0.9; // OpenCV's FaceDetectorYN default
 const NMS_THRESHOLD: f32 = 0.3; // OpenCV's FaceDetectorYN default
 const STRIDES: [usize; 3] = [8, 16, 32];
 // Standard 112x112 ArcFace/SFace alignment template (OpenCV
@@ -381,17 +381,8 @@ pub fn load_reference_people(refdir: &str, yunet: &Model, sface: &Model) -> Vec<
                 if !["jpg", "jpeg", "png", "bmp"].contains(&ext.to_lowercase().as_str()) {
                     continue;
                 }
-                let img = match open_image(&p) {
-                    Ok(im) => im,
-                    Err(e) => { eprintln!("    [debug] {}: open failed: {e}", p.display()); continue; }
-                };
-                eprintln!("    [debug] {}: {}x{}", p.display(), img.width(), img.height());
-                let dets = match detect_faces(&img, yunet) {
-                    Ok(d) => d,
-                    Err(e) => { eprintln!("    [debug] {}: detect_faces failed: {e}", p.display()); continue; }
-                };
-                eprintln!("    [debug] {}: {} candidate(s), best score = {:?}", p.display(), dets.len(),
-                    dets.iter().map(|d| d.score).fold(None, |m: Option<f32>, s| Some(m.map_or(s, |m| m.max(s)))));
+                let Ok(img) = open_image(&p) else { continue };
+                let Ok(dets) = detect_faces(&img, yunet) else { continue };
                 if let Some(best) = dets.iter().max_by(|a, b| a.score.partial_cmp(&b.score).unwrap()) {
                     let aligned = align_crop(&img, &best.landmarks);
                     if let Ok(emb) = embed(&aligned, sface) {
