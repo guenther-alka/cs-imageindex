@@ -22,6 +22,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-latest
+            artifact: cs-imageindex-ffmpeg-linux.amd64
+          - os: windows-latest
+            artifact: cs-imageindex-ffmpeg-mswin.amd64
+          - os: macos-latest
+            artifact: cs-imageindex-ffmpeg-darwin.arm64
           - os: macos-latest
             artifact: cs-imageindex-ffmpeg-darwin.amd64
             ff_target_arch: x86_64
