@@ -271,13 +271,18 @@ no illumos/SunOS build at all, so a self-hosted runner on real OmniOS
 hardware isn't actually possible the way it is for the other three
 platforms. The illumos binary is built by hand with
 `illumos/cs-imageindex_omnios_1a.sh` and uploaded to the same release
-separately (`gh release upload <tag> cs-imageindex-illumos-x86_64.tar.gz`).
+separately (`gh release upload <tag> cs-imageindex-illumos.amd64.tar.gz`).
 
 Note: the CI-built Linux/Windows/macOS binaries do not currently bundle
 `ffmpeg`/`ffprobe` — video files are skipped on those platforms unless
 the user has `ffmpeg` installed and on `PATH` (see Supported formats
 above). Bundling static `ffmpeg` binaries into those release archives is
 a planned follow-up, not yet implemented.
+
+Release asset names follow the napp-it CS Tools convention
+(`<asset>-<platform>.<arch>.tar.gz`, e.g. `cs-imageindex-linux.amd64.tar.gz`)
+so the binaries can be installed from the napp-it CS "About > CS Tools
+Download" menu into `data/cs_server/tools/cs-imageindex/<platform>.<arch>/`.
 
 ## Status
 

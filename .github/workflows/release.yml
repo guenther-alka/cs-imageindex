@@ -11,7 +11,7 @@ name: Release
 # data/howto.ai/cs-imageindex.info in the napp-it CS project for the full
 # background. After this workflow finishes a release, build illumos by hand
 # with that script and upload the resulting tarball to the same release
-# (gh release upload <tag> cs-imageindex-illumos-x86_64.tar.gz).
+# (gh release upload <tag> cs-imageindex-illumos.amd64.tar.gz).
 
 on:
   push:
@@ -30,19 +30,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: cs-imageindex-linux-x86_64
+            artifact: cs-imageindex-linux.amd64
             bin: cs-imageindex
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: cs-imageindex-windows-x86_64
+            artifact: cs-imageindex-mswin.amd64
             bin: cs-imageindex.exe
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: cs-imageindex-macos-arm64
+            artifact: cs-imageindex-darwin.arm64
             bin: cs-imageindex
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: cs-imageindex-macos-x86_64
+            artifact: cs-imageindex-darwin.amd64
             bin: cs-imageindex
             cross: true
 
@@ -78,11 +78,9 @@ jobs:
           mkdir -p dist/models
           cp models/*.onnx models/LICENSE-*.txt dist/models/
           cd dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a ../${{ matrix.artifact }}.zip .
-          else
-            tar -czf ../${{ matrix.artifact }}.tar.gz .
-          fi
+          # all platforms ship a .tar.gz -- napp-it CS Tools "tar" convention
+          # (<asset>-<platform>.<arch>.tar.gz; extracted by bsdtar on Windows)
+          tar -czf ../${{ matrix.artifact }}.tar.gz .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -90,7 +88,6 @@ jobs:
           name: ${{ matrix.artifact }}
           path: |
             ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.zip
           if-no-files-found: ignore
 
   release:
@@ -122,3 +119,7 @@ jobs:
             illumos/cs-imageindex_omnios_1a.sh and uploaded to this release
             separately when available. The illumos binary DOES include full
             HEIC/HEIF support.
+
+            Asset names follow the napp-it CS Tools convention
+            (<asset>-<platform>.<arch>.tar.gz) for the "About > CS Tools
+            Download" menu.
