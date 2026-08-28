@@ -53,8 +53,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nasm
 
-      - name: Build ffmpeg bundle (ci/build-ffmpeg.sh)
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+      - name: Build ffmpeg bundle (Windows/MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          rm -rf /tmp/ffdist
+          bash ci/build-ffmpeg.sh /tmp/ffdist
+          cp LICENSE-ffmpeg.txt /tmp/ffdist/
+          cd /tmp/ffdist
+          tar -czf "$OLDPWD/${{ matrix.artifact }}.tar.gz" .
+
+      - name: Build ffmpeg bundle (Linux/macOS)
+        if: runner.os != 'Windows'
         run: |
           rm -rf /tmp/ffdist
           bash ci/build-ffmpeg.sh /tmp/ffdist
