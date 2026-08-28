@@ -67,26 +67,25 @@ with:
 pure-Rust `rawloader`/`imagepipe` crates, no external tools or system
 libraries required.
 
-**HEIC/HEIF (v0.3):** `.heic`, `.heif` (the default photo format on
-recent iPhones) — decoded via the system `libheif` C library (the
-`heic` cargo feature, on by default). Embedded rotation/mirroring/
-cropping is applied automatically. Requires `libheif` >= 1.23 to be
-present at *build* time (it's linked, not loaded dynamically at
-runtime by choice) — the prebuilt Linux/Windows/macOS binaries from
-this repo's GitHub Releases are built with `--no-default-features`
-because the GitHub-hosted CI runners don't ship a new enough libheif,
-so HEIC support is off in those specific downloads. The illumos binary
-and any binary you build yourself with libheif installed DO have it.
-Where the feature is compiled in but `libheif` genuinely isn't
-resolvable, HEIC/HEIF files are skipped like any other unreadable file
-rather than failing the whole run.
+**HEIC/HEIF (v0.3):** `.heic`, `.heif` — the default photo format on
+recent iPhones (H.265/HEVC-compressed, roughly half the file size of
+JPEG at equal quality). Decoded via the bundled `ffmpeg` (its ISOBMFF
+"mov" demuxer + built-in HEVC decoder) — no system `libheif` is needed.
+One representative frame is extracted and run through the same
+face/vision/quality pipeline as a still photo, and the EXIF metadata
+(date, GPS, camera) is read directly from the HEIF file. If `ffmpeg` is
+missing, HEIC/HEIF files are skipped like any other unreadable file.
 
-**Planned for v0.4:** add a `libheif` install step to `release.yml` for
-the Linux and macOS CI jobs (`apt install libheif-dev` /
-`brew install libheif`) so those two prebuilt binaries get HEIC support
-without the user having to build from source — Windows is out of scope
-for this since there's no ready `libheif` package for MSVC (would need
-a vcpkg-based build). Not yet implemented.
+How HEIC is provided, per OS:
+- **illumos/OmniOS** — bundled ffmpeg in the release archive; works out
+  of the box, no extra package.
+- **Linux** — bundled ffmpeg; works out of the box.
+- **macOS** — bundled ffmpeg; works out of the box.
+- **Windows** — bundled ffmpeg; works out of the box.
+
+All release archives bundle the static LGPL `ffmpeg`/`ffprobe` (see
+`LICENSE-ffmpeg.txt`), so HEIC — like video — works everywhere without
+any system library dependency.
 
 **Video (v0.3):** `.mp4`, `.mov`, `.avi`, `.m4v`, `.mkv` — one
 representative frame is extracted and run through the same face/vision/
@@ -252,23 +251,14 @@ See `illumos/cs-imageindex_omnios_1a.sh` (modeled on RustFS's
 `rustfs_omnios_1a.sh` build script) — built and tested on real OmniOS
 r151058j hardware, including v0.3's RAW/HEIC/video support.
 
-RAW support needs nothing extra (pure Rust). HEIC support links
-`ooce/library/libheif`, which OmniOS installs under `/opt/ooce` — a
-location that is on neither the default `pkg-config` search path nor
-the default runtime linker search path. The build script therefore sets
-`PKG_CONFIG_PATH=/opt/ooce/lib/amd64/pkgconfig:/opt/ooce/lib/pkgconfig`
-so `libheif-sys` can find `libheif.pc` at build time, and bakes an
-`-R/opt/ooce/lib/amd64` rpath into the binary via `RUSTFLAGS` so it
-finds `libheif.so.1` at run time without the end user needing to set
-`LD_LIBRARY_PATH`. Unlike the Linux/Windows/macOS builds, the illumos
-binary is therefore not fully dependency-free — it dynamically links
-`libheif` (from `ooce/library/libheif`, `extra.omnios` publisher) for
-HEIC support. Video support needs no separate install: the illumos
-release archive bundles a minimal static LGPL `ffmpeg`/`ffprobe` next to
-the binary (built on the illumos build host with the same minimal recipe
-as `ci/build-ffmpeg.sh`), exactly like the CI-built archives. A system
-`ffmpeg` on `PATH` is only used as a fallback if the bundled copies are
-removed.
+RAW support needs nothing extra (pure Rust). HEIC support also needs
+nothing extra: like video, HEIC/HEIF is decoded via the bundled
+`ffmpeg`/`ffprobe` (see Supported formats above) — the illumos release
+archive carries the same minimal static LGPL ffmpeg built on the
+illumos build host with `ci/build-ffmpeg.sh`. The illumos binary is
+therefore fully self-contained: no `libheif`, no ooce packages, no
+rpath/LD_LIBRARY_PATH games. A system `ffmpeg` on `PATH` is only used
+as a fallback if the bundled copies are removed.
 
 ## Continuous integration / releases
 
@@ -300,8 +290,8 @@ video (both platforms) test files correctly produce container/GPS
 metadata, run through the quality/dedup pipeline, and cross-format
 near-duplicate grouping works even between a JPEG/HEIC/video of the same
 source photo. All release archives (Linux/Windows/macOS/illumos) bundle
-a minimal static LGPL `ffmpeg`/`ffprobe`, so video indexing works out of
-the box (verified on Linux and illumos).
+a minimal static LGPL `ffmpeg`/`ffprobe`, so video AND HEIC indexing
+work out of the box (verified on Linux and illumos).
 
 v0.2.0 baseline: validated end-to-end on Linux (.112) and OmniOS/illumos
 (.189, real hardware, first-attempt clean builds both times) — EXIF/GPS,
