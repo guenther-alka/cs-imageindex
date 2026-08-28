@@ -55,16 +55,19 @@ CFG_CC=()
 if [ "$HOST" = windows ]; then
     CFG_CC+=(--cc=x86_64-w64-mingw32-gcc)
 elif [ "$HOST" = darwin ] && [ "${FFMPEG_TARGET_ARCH:-}" = x86_64 ]; then
+    # cross-compile x86_64 from an arm64 host (macos-latest runner): canonical
+    # recipe is --cc=clang with -arch in cflags/ldflags; --enable-cross-compile
+    # makes configure skip running the (unrunnable) x86_64 test programs.
     CFG_CC+=(--enable-cross-compile --target-os=darwin --arch=x86_64 \
-             --cc="clang -arch x86_64" --extra-cflags="-arch x86_64" \
-             --extra-ldflags="-arch x86_64")
+             --cc=clang --extra-cflags="-arch x86_64" --extra-ldflags="-arch x86_64" \
+             --disable-x86asm)
 elif [ "$HOST" = darwin ]; then
     CFG_CC+=(--cc=clang)
 else
     CFG_CC+=(--cc=gcc)
 fi
 
-./configure \
+if ! ./configure \
   --prefix="$WORK/out" \
   "${CFG_CC[@]}" \
   --disable-shared --enable-static \
@@ -72,7 +75,11 @@ fi
   --disable-avdevice --disable-network \
   --disable-gpl --disable-nonfree \
   --disable-doc \
-  > configure.log 2>&1
+  > configure.log 2>&1; then
+    echo "[ffmpeg] configure FAILED -- tail of configure.log:"
+    tail -40 configure.log
+    exit 1
+fi
 
 # ---- build -----------------------------------------------------------------
 NCORES="$(nproc 2>/dev/null || getconf NPROCESSORS_ONLN 2>/dev/null || echo 2)"
