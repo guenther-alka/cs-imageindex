@@ -24,8 +24,10 @@ Workflow:
 
 ## What it does
 
-Index a folder of photos and write one CSV row per image with:
+Index a folder of photos and videos and write one CSV row per media file
+with:
 
+- `media_type` — `image` / `raw` / `heic` / `video`
 - `date_taken` — EXIF `DateTimeOriginal`
 - `gps_lat` / `gps_lon` — EXIF GPS, decimal degrees (empty if the photo has none)
 - `place` — reverse-geocoded place name (e.g. "München, Deutschland") from the
@@ -33,6 +35,7 @@ Index a folder of photos and write one CSV row per image with:
   or offline)
 - `camera` — EXIF Make + Model (e.g. "samsung SM-G981B")
 - `resolution` — pixel dimensions, e.g. "4032x3024"
+- `duration` — video duration in seconds (empty for still images)
 - `orientation` — `landscape` / `portrait` / `square`
 - `flash` — `yes` / `no` / empty if the EXIF Flash tag is absent
 - `blur_score` — Laplacian-variance sharpness estimate (higher = sharper;
@@ -257,12 +260,15 @@ the default runtime linker search path. The build script therefore sets
 so `libheif-sys` can find `libheif.pc` at build time, and bakes an
 `-R/opt/ooce/lib/amd64` rpath into the binary via `RUSTFLAGS` so it
 finds `libheif.so.1` at run time without the end user needing to set
-`LD_LIBRARY_PATH`. Video support additionally needs
-`ooce/multimedia/ffmpeg` installed for video files to be indexed (both
-packages come from the `extra.omnios` publisher). Unlike the Linux/
-Windows/macOS builds, the illumos binary is therefore not fully
-dependency-free — it dynamically links `libheif` and shells out to
-`ffmpeg`, both of which must be present on the machine it runs on.
+`LD_LIBRARY_PATH`. Unlike the Linux/Windows/macOS builds, the illumos
+binary is therefore not fully dependency-free — it dynamically links
+`libheif` (from `ooce/library/libheif`, `extra.omnios` publisher) for
+HEIC support. Video support needs no separate install: the illumos
+release archive bundles a minimal static LGPL `ffmpeg`/`ffprobe` next to
+the binary (built on the illumos build host with the same minimal recipe
+as `ci/build-ffmpeg.sh`), exactly like the CI-built archives. A system
+`ffmpeg` on `PATH` is only used as a fallback if the bundled copies are
+removed.
 
 ## Continuous integration / releases
 
@@ -293,7 +299,9 @@ and OmniOS/illumos (.189, real hardware) — synthetic HEIC (Linux) and
 video (both platforms) test files correctly produce container/GPS
 metadata, run through the quality/dedup pipeline, and cross-format
 near-duplicate grouping works even between a JPEG/HEIC/video of the same
-source photo.
+source photo. All release archives (Linux/Windows/macOS/illumos) bundle
+a minimal static LGPL `ffmpeg`/`ffprobe`, so video indexing works out of
+the box (verified on Linux and illumos).
 
 v0.2.0 baseline: validated end-to-end on Linux (.112) and OmniOS/illumos
 (.189, real hardware, first-attempt clean builds both times) — EXIF/GPS,
