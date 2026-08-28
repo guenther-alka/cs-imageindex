@@ -23,6 +23,12 @@ set -o pipefail
 
 OUT="$1"
 [ -n "$OUT" ] || { echo "usage: build-ffmpeg.sh <outdir>"; exit 1; }
+# resolve OUT to an absolute path: the script changes directory (WORK) later,
+# so a relative OUT would break the final copy into it
+case "$OUT" in
+  /*) ;;
+  *) OUT="$(pwd)/$OUT" ;;
+esac
 
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.2}"
 FFMPEG_URL="${FFMPEG_URL:-https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz}"
