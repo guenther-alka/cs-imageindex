@@ -18,12 +18,12 @@ use std::path::PathBuf;
 #[command(version, about)]
 struct Args {
     /// Folder to index (scanned recursively)
-    #[arg(long)]
-    folder: PathBuf,
+    #[arg(long, required_unless_present = "print_config_example")]
+    folder: Option<PathBuf>,
 
     /// Output CSV path
-    #[arg(long)]
-    out: PathBuf,
+    #[arg(long, required_unless_present = "print_config_example")]
+    out: Option<PathBuf>,
 
     /// reference/<Name>/*.jpg folder for face matching (omit = no person
     /// recognition, "people" column left empty)
@@ -116,6 +116,9 @@ fn main() {
         print!("{}", config::CONFIG_EXAMPLE);
         return;
     }
+    // clap guarantees these are Some() here (required_unless_present above).
+    let folder = args.folder.clone().expect("--folder is required");
+    let out = args.out.clone().expect("--out is required");
 
     let use_vision = !args.no_vision;
     let vcfg = resolve_vision_config(&args);
@@ -176,21 +179,21 @@ fn main() {
     };
 
     let mut files: Vec<PathBuf> = Vec::new();
-    for entry in walkdir(&args.folder) {
+    for entry in walkdir(&folder) {
         if face::is_image(&entry) {
             files.push(entry);
         }
     }
     files.sort();
-    println!("found {} image(s) under {}", files.len(), args.folder.display());
+    println!("found {} image(s) under {}", files.len(), folder.display());
 
-    let out_file = std::fs::File::create(&args.out).expect("cannot create output CSV");
+    let out_file = std::fs::File::create(&out).expect("cannot create output CSV");
     let mut w = csv::Writer::from_writer(out_file);
     w.write_record(["file", "date_taken", "gps_lat", "gps_lon", "people", "unknown_faces", "description"])
         .unwrap();
 
     for (i, path) in files.iter().enumerate() {
-        let rel = path.strip_prefix(&args.folder).unwrap_or(path);
+        let rel = path.strip_prefix(&folder).unwrap_or(path);
         println!("[{}/{}] {}", i + 1, files.len(), rel.display());
 
         let img = match face::open_image(path) {
@@ -240,7 +243,7 @@ fn main() {
         w.flush().ok();
     }
 
-    println!("done -- index written to {}", args.out.display());
+    println!("done -- index written to {}", out.display());
 }
 
 fn walkdir(root: &PathBuf) -> Vec<PathBuf> {
