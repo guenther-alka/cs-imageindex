@@ -53,6 +53,15 @@ Index a folder of photos and write one CSV row per image with:
   documents, screens), empty if none
 - `description` — a one-sentence scene description from a vision-capable LLM
 
+## Supported formats
+
+**v0.2 (current):** still images only —  `.jpg` / `.jpeg`, `.png`, `.bmp`,
+`.tif` / `.tiff` (matched by file content, not just the extension).
+
+**Planned for v0.3:** video files — `.mp4`, `.mov`, `.avi` (frame/thumbnail
+extraction + container metadata such as creation date and GPS, run through
+the same face/vision/quality pipeline as still images). Not yet implemented.
+
 Single static binary, no runtime to install. Face detection/recognition
 (YuNet + SFace, both ONNX) runs through [`tract`](https://github.com/sonos/tract)
 (pure Rust, no OpenCV/cgo/onnxruntime dependency) — the exact detection and
