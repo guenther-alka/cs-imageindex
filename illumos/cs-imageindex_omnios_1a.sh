@@ -9,29 +9,14 @@
 # source patching is expected.
 #
 # v0.3 note: RAW photo support (rawloader/imagepipe) is pure Rust and needs
-# nothing extra here. HEIC/HEIF support (the default "heic" cargo feature)
-# links the system libheif C library via pkg-config, and video support
-# shells out to an external ffmpeg/ffprobe at runtime -- both come from the
-# extra.omnios publisher and both install under /opt/ooce, which is NOT on
-# illumos's default pkg-config search path or default runtime linker search
-# path (/lib:/usr/lib only, per crle). Steps 1, 5 and 6 below account for
-# that: PKG_CONFIG_PATH so libheif-sys's build.rs can find libheif.pc at
-# build time, and an -R rpath baked in via RUSTFLAGS so the resulting binary
-# finds libheif.so.1 at run time without the end user needing to set
-# LD_LIBRARY_PATH. Confirmed working on real OmniOS r151058j hardware
-# (192.168.2.189) for v0.3.0: build succeeds, `cs-imageindex --version`
-# runs standalone, and a synthetic ffmpeg-generated test video indexes
-# correctly (duration, creation_time, and ISO-6709 GPS all read correctly).
-# HEIC could not be smoke-tested on illumos itself (no heif-enc/
-# libheif-examples package available there to synthesize a test file), but
-# it shares the identical code path already verified functionally on Linux.
-#
-# Runtime dependency added by v0.3 (beyond what v0.2 needed): the compiled
-# binary now requires ooce/library/libheif to be installed on the target
-# machine (it is dynamically linked, not bundled) for HEIC files to decode.
-# Video support additionally requires ooce/multimedia/ffmpeg to be installed
-# and on PATH (or a bundled ffmpeg/ffprobe next to the binary) -- without
-# it, video files are skipped gracefully with a note printed at startup.
+# nothing extra here. HEIC/HEIF and video are both decoded via the bundled
+# ffmpeg/ffprobe (built by ci/build-ffmpeg.sh from ffmpeg.org source with a
+# minimal static LGPL configuration) -- no system libheif, no ooce packages,
+# no rpath/LD_LIBRARY_PATH games. The resulting release archive is fully
+# self-contained: cs-imageindex + ffmpeg + ffprobe + models/ + licenses.
+# Confirmed working on real OmniOS r151058j hardware (192.168.2.189) for
+# v0.3.0: build succeeds, `cs-imageindex --version` runs standalone, and
+# HEIC + video test files index correctly (metadata, quality signals).
 #
 # Usage:
 #   bash ./cs-imageindex_omnios_1a.sh
@@ -66,14 +51,10 @@ pkg install -q developer/rust           2>/dev/null || true
 pkg install -q developer/gcc            2>/dev/null || true
 # protoc: tract-onnx pulls in prost/prost-build for ONNX protobuf parsing.
 pkg install -q ooce/developer/protobuf  2>/dev/null || true
-# v0.3: pkg-config (to locate libheif.pc), libheif (HEIC/HEIF decoding,
-# dynamically linked at build+run time), and ffmpeg (video frame/metadata
-# extraction, invoked as an external process at run time only -- not linked).
-pkg install -q developer/pkg-config     2>/dev/null || true
-pkg install -q ooce/library/libheif     2>/dev/null || true
-pkg install -q ooce/multimedia/ffmpeg   2>/dev/null || true
+# v0.3: nothing extra needed -- HEIC/HEIF and video are decoded via the
+# bundled ffmpeg/ffprobe that this script builds and packages (step 7).
 
-for cmd in gcc git curl protoc pkg-config; do
+for cmd in gcc git curl protoc; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: $cmd not found. Aborting."
         exit 1
@@ -81,7 +62,6 @@ for cmd in gcc git curl protoc pkg-config; do
 done
 echo "  GCC:        $(gcc --version | head -1)"
 echo "  protoc:     $(protoc --version)"
-echo "  pkg-config: $(pkg-config --version)"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -160,16 +140,6 @@ ar = "ar"
 CARGOEOF
 
 echo "  -> .cargo/config.toml written"
-
-# v0.3: extra.omnios packages (libheif) install under /opt/ooce, which is
-# not on the default pkg-config search path -- point pkg-config at it so
-# libheif-sys's build.rs can find libheif.pc. Also bake an -R rpath into
-# the binary via RUSTFLAGS so it finds libheif.so.1 at run time without
-# requiring LD_LIBRARY_PATH to be set for end users.
-export PKG_CONFIG_PATH="/opt/ooce/lib/amd64/pkgconfig:/opt/ooce/lib/pkgconfig"
-export RUSTFLAGS="-C link-args=-Wl,-R/opt/ooce/lib/amd64"
-echo "  -> PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
-echo "  -> RUSTFLAGS=$RUSTFLAGS"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -197,32 +167,47 @@ if ! cargo build --release 2>&1 | tee -a "$LOGFILE"; then
     echo "   - ureq's TLS backend: if it pulls in openssl-sys/native-tls"
     echo "     instead of rustls, pin ureq's rustls feature explicitly in"
     echo "     Cargo.toml instead of the default TLS feature."
-    echo "   - libheif-sys / pkg-config: if it still can't find libheif.pc,"
-    echo "     run 'find / -name libheif.pc' and adjust PKG_CONFIG_PATH"
-    echo "     above to match (paths can shift between OmniOS releases)."
-    echo "     As a last resort, build with --no-default-features to skip"
-    echo "     HEIC support entirely (HEIC files are then just skipped)."
     echo "============================================================"
     exit 1
 fi
 
 BINARY="$REPO_DIR/target/release/cs-imageindex"
 
-if [ -f "$BINARY" ]; then
-    echo ""
-    echo "============================================================"
-    echo " BUILD SUCCESSFUL  [1a]"
-    echo " Started: $START_TS"
-    echo " Finished: $(date '+%Y-%m-%d %H:%M:%S %Z')"
-    echo " Binary:   $BINARY"
-    echo " Size:     $(ls -lh $BINARY | awk '{print $5}')"
-    echo ""
-    echo " Runtime dependencies on this machine (dynamically linked/"
-    echo " shelled out to, not bundled): ooce/library/libheif (HEIC),"
-    echo " ooce/multimedia/ffmpeg (video, optional -- skipped gracefully"
-    echo " if absent)."
-    echo "============================================================"
-else
+if [ ! -f "$BINARY" ]; then
     echo "BUILD FAILED: binary not found."
     exit 1
 fi
+
+echo ""
+echo "============================================================"
+echo " BUILD SUCCESSFUL  [1a]"
+echo " Started: $START_TS"
+echo " Finished: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+echo " Binary:   $BINARY"
+echo " Size:     $(ls -lh $BINARY | awk '{print $5}')"
+echo "============================================================"
+
+# ---------------------------------------------------------------------------
+# 7. Build the bundled ffmpeg/ffprobe + package the self-contained archive
+# ---------------------------------------------------------------------------
+echo "[7/7] Building bundled ffmpeg + packaging..."
+bash "$REPO_DIR/ci/build-ffmpeg.sh" /tmp/ffdist
+
+PKG="/tmp/cs-imageindex-pkg"
+rm -rf "$PKG" && mkdir -p "$PKG/models"
+cp "$BINARY" "$PKG/"
+cp /tmp/ffdist/ffmpeg /tmp/ffdist/ffprobe "$PKG/"
+cp "$REPO_DIR/README.md" "$REPO_DIR/LICENSE" "$REPO_DIR/LICENSE-ffmpeg.txt" "$PKG/"
+cp "$REPO_DIR"/models/*.onnx "$REPO_DIR"/models/LICENSE-*.txt "$PKG/models/"
+chmod 0755 "$PKG/cs-imageindex" "$PKG/ffmpeg" "$PKG/ffprobe"
+tar -czf "$HOME/cs-imageindex-illumos.amd64.tar.gz" -C "$PKG" .
+echo "  -> Archive: $HOME/cs-imageindex-illumos.amd64.tar.gz"
+ls -lh "$HOME/cs-imageindex-illumos.amd64.tar.gz"
+
+echo ""
+echo "============================================================"
+echo " DONE -- the archive is fully self-contained (HEIC + video"
+echo " via the bundled ffmpeg; no libheif, no ooce runtime deps)."
+echo " Upload it with:"
+echo "   gh release upload <tag> $HOME/cs-imageindex-illumos.amd64.tar.gz"
+echo "============================================================"
