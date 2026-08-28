@@ -72,6 +72,12 @@ elif [ "$HOST" = darwin ]; then
 else
     CFG_CC+=(--cc=gcc)
 fi
+# x86_64 builds need nasm/yasm for the assembly-optimized codecs; without it
+# configure aborts ("nasm/yasm not found or too old"), so fall back to a
+# pure-C build (slower, still correct). CI installs nasm; bare machines don't.
+if [ "$HOST" != darwin ] && ! command -v nasm >/dev/null 2>&1 && ! command -v yasm >/dev/null 2>&1; then
+    CFG_CC+=(--disable-x86asm)
+fi
 
 if ! ./configure \
   --prefix="$WORK/out" \
