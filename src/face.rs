@@ -28,6 +28,17 @@ const ARCFACE_TEMPLATE: [(f32, f32); 5] = [
     (70.7299, 92.2041),
 ];
 
+/// Open an image by sniffing its actual content, not its file extension.
+/// `image::open()` picks the decoder from the path's extension, which
+/// silently fails (and gets swallowed by callers' `let Ok(..) else continue`)
+/// on a mislabeled file -- e.g. a "referenzphoto.jpg" that is actually PNG
+/// data (observed on a real user-supplied reference photo, cs_26.08.28).
+pub fn open_image(path: &Path) -> image::ImageResult<DynamicImage> {
+    let reader = image::ImageReader::open(path).map_err(image::ImageError::IoError)?;
+    let reader = reader.with_guessed_format().map_err(image::ImageError::IoError)?;
+    reader.decode()
+}
+
 pub fn load_model(path: &str) -> TractResult<Model> {
     tract_onnx::onnx()
         .model_for_path(path)?
@@ -329,7 +340,7 @@ pub fn load_reference_people(refdir: &str, yunet: &Model, sface: &Model) -> Vec<
                 if !["jpg", "jpeg", "png", "bmp"].contains(&ext.to_lowercase().as_str()) {
                     continue;
                 }
-                let Ok(img) = image::open(&p) else { continue };
+                let Ok(img) = open_image(&p) else { continue };
                 let Ok(dets) = detect_faces(&img, yunet) else { continue };
                 if let Some(best) = dets.iter().max_by(|a, b| a.score.partial_cmp(&b.score).unwrap()) {
                     let aligned = align_crop(&img, &best.landmarks);

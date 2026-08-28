@@ -193,7 +193,7 @@ fn main() {
         let rel = path.strip_prefix(&args.folder).unwrap_or(path);
         println!("[{}/{}] {}", i + 1, files.len(), rel.display());
 
-        let img = match image::open(path) {
+        let img = match face::open_image(path) {
             Ok(im) => im,
             Err(e) => {
                 w.write_record([
