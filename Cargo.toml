@@ -1,0 +1,24 @@
+[package]
+name = "cs-imageindex"
+version = "0.1.0"
+edition = "2021"
+description = "Index a folder of photos: EXIF date/GPS, an LLM scene description, and face recognition against reference photos -- single static binary."
+license = "MIT"
+
+[[bin]]
+name = "cs-imageindex"
+path = "src/main.rs"
+
+[dependencies]
+tract-onnx = "0.21"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "tiff"] }
+kamadak-exif = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+csv = "1"
+
+[profile.release]
+opt-level = 3
