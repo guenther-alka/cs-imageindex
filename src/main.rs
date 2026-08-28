@@ -3,6 +3,7 @@ mod dedup;
 mod exif_read;
 mod face;
 mod geocode;
+mod media;
 mod quality;
 mod vision;
 
@@ -153,8 +154,10 @@ fn image_to_data_url(img: &image::DynamicImage) -> String {
 /// (duplicate_group is filled in afterwards, once all phashes are known).
 struct RowRecord {
     rel_path: String,
+    media_type: &'static str,
     exif: exif_read::ExifData,
     resolution: String,
+    duration: Option<f64>,
     orientation: &'static str,
     camera: String,
     flash: &'static str,
@@ -180,36 +183,65 @@ struct SharedCtx<'a> {
     ollama_model: &'a str,
     vcfg: &'a VisionConfig,
     geocode_active: bool,
+    ffmpeg: Option<PathBuf>,
+    ffprobe: Option<PathBuf>,
 }
 
 fn process_one(path: &PathBuf, ctx: &SharedCtx) -> RowRecord {
     let rel = path.strip_prefix(ctx.folder).unwrap_or(path);
     let rel_path = rel.to_string_lossy().to_string();
+    let kind = media::kind(path);
+    let media_type = kind.label();
 
-    let img = match face::open_image(path) {
-        Ok(im) => im,
-        Err(e) => {
-            return RowRecord {
-                rel_path,
-                exif: exif_read::ExifData::default(),
-                resolution: String::new(),
-                orientation: "",
-                camera: String::new(),
-                flash: "",
-                blur: 0.0,
-                phash: 0,
-                is_screenshot: "",
-                place: String::new(),
-                matched_names: Vec::new(),
-                unmatched: 0,
-                face_count: 0,
-                vres: vision::VisionResult::default(),
-                error: Some(format!("[read error: {e}]")),
-            };
-        }
+    let err_row = |rel_path: String, msg: String| RowRecord {
+        rel_path,
+        media_type,
+        exif: exif_read::ExifData::default(),
+        resolution: String::new(),
+        duration: None,
+        orientation: "",
+        camera: String::new(),
+        flash: "",
+        blur: 0.0,
+        phash: 0,
+        is_screenshot: "",
+        place: String::new(),
+        matched_names: Vec::new(),
+        unmatched: 0,
+        face_count: 0,
+        vres: vision::VisionResult::default(),
+        error: Some(msg),
     };
 
-    let exif = exif_read::read_all(path);
+    // Video: extract one representative frame + container metadata via
+    // ffmpeg/ffprobe instead of decoding the file directly / reading EXIF.
+    let (img, exif, duration) = if kind == media::MediaKind::Video {
+        let (Some(ffmpeg), Some(ffprobe)) = (&ctx.ffmpeg, &ctx.ffprobe) else {
+            return err_row(
+                rel_path,
+                "[skipped: ffmpeg/ffprobe not found -- video support needs both on PATH \
+                 or bundled next to this binary, see README \"Supported formats\"]"
+                    .to_string(),
+            );
+        };
+        let meta = media::probe_video(path, ffprobe);
+        let img = match media::extract_video_frame(path, ffmpeg, meta.duration_secs) {
+            Ok(im) => im,
+            Err(e) => return err_row(rel_path, format!("[video read error: {e}]")),
+        };
+        let mut exif = exif_read::ExifData::default();
+        exif.datetime = meta.creation_time.clone().unwrap_or_default();
+        exif.gps_lat = meta.gps.map(|(lat, _)| lat);
+        exif.gps_lon = meta.gps.map(|(_, lon)| lon);
+        (img, exif, meta.duration_secs)
+    } else {
+        let img = match media::open_still_image(path) {
+            Ok(im) => im,
+            Err(e) => return err_row(rel_path, format!("[read error: {e}]")),
+        };
+        let exif = exif_read::read_all(path);
+        (img, exif, None)
+    };
 
     let (width, height) = (img.width(), img.height());
     let resolution = format!("{width}x{height}");
@@ -228,7 +260,13 @@ fn process_one(path: &PathBuf, ctx: &SharedCtx) -> RowRecord {
     };
     let blur = quality::blur_score(&img);
     let phash = quality::perceptual_hash(&img);
-    let is_screenshot = if exif_read::is_screenshot_heuristic(&exif) { "yes" } else { "" };
+    // A video frame naturally has no camera Make/Model EXIF -- don't let
+    // the screenshot heuristic (which relies on exactly that) misfire on it.
+    let is_screenshot = if kind != media::MediaKind::Video && exif_read::is_screenshot_heuristic(&exif) {
+        "yes"
+    } else {
+        ""
+    };
 
     let place = match (exif.gps_lat, exif.gps_lon) {
         (Some(lat), Some(lon)) if ctx.geocode_active => geocode::reverse_geocode(lat, lon).unwrap_or_default(),
@@ -255,8 +293,10 @@ fn process_one(path: &PathBuf, ctx: &SharedCtx) -> RowRecord {
 
     RowRecord {
         rel_path,
+        media_type,
         exif,
         resolution,
+        duration,
         orientation,
         camera,
         flash,
@@ -272,10 +312,10 @@ fn process_one(path: &PathBuf, ctx: &SharedCtx) -> RowRecord {
     }
 }
 
-const CSV_HEADER: [&str; 19] = [
-    "file", "date_taken", "gps_lat", "gps_lon", "place", "camera", "resolution", "orientation",
-    "flash", "blur_score", "phash", "duplicate_group", "is_screenshot", "people",
-    "unknown_faces", "face_count", "tags", "ocr_text", "description",
+const CSV_HEADER: [&str; 21] = [
+    "file", "media_type", "date_taken", "gps_lat", "gps_lon", "place", "camera", "resolution",
+    "duration", "orientation", "flash", "blur_score", "phash", "duplicate_group", "is_screenshot",
+    "people", "unknown_faces", "face_count", "tags", "ocr_text", "description",
 ];
 
 fn main() {
@@ -350,12 +390,21 @@ fn main() {
 
     let mut files: Vec<PathBuf> = Vec::new();
     for entry in walkdir(&folder) {
-        if face::is_image(&entry) {
+        if media::is_supported(&entry) {
             files.push(entry);
         }
     }
     files.sort();
-    println!("found {} image(s) under {}", files.len(), folder.display());
+    println!("found {} file(s) under {}", files.len(), folder.display());
+
+    let ffmpeg = media::find_tool("ffmpeg");
+    let ffprobe = media::find_tool("ffprobe");
+    if ffmpeg.is_none() || ffprobe.is_none() {
+        println!(
+            "note: ffmpeg/ffprobe not found -- video files will be skipped \
+             (see README \"Supported formats\")"
+        );
+    }
 
     // --resume: skip files already present in an existing output CSV.
     let append_mode = args.resume && out.exists();
@@ -408,6 +457,8 @@ fn main() {
         ollama_model: &args.ollama_model,
         vcfg: &vcfg,
         geocode_active,
+        ffmpeg,
+        ffprobe,
     };
 
     let total = files.len();
@@ -446,8 +497,8 @@ fn main() {
 
     for (rec, &group) in rows.iter().zip(dup_groups.iter()) {
         if let Some(err) = &rec.error {
-            let mut row = vec![rec.rel_path.clone()];
-            row.extend(std::iter::repeat(String::new()).take(17));
+            let mut row = vec![rec.rel_path.clone(), rec.media_type.to_string()];
+            row.extend(std::iter::repeat(String::new()).take(18));
             row.push(err.clone());
             w.write_record(&row).unwrap();
             continue;
@@ -455,12 +506,14 @@ fn main() {
         let dup_str = if group != 0 && dup_sizes[group] > 1 { group.to_string() } else { String::new() };
         w.write_record([
             rec.rel_path.as_str(),
+            rec.media_type,
             &rec.exif.datetime,
             &rec.exif.gps_lat.map(|v| format!("{v:.6}")).unwrap_or_default(),
             &rec.exif.gps_lon.map(|v| format!("{v:.6}")).unwrap_or_default(),
             &rec.place,
             &rec.camera,
             &rec.resolution,
+            &rec.duration.map(|d| format!("{d:.1}")).unwrap_or_default(),
             rec.orientation,
             rec.flash,
             &format!("{:.1}", rec.blur),

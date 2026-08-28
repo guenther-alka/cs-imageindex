@@ -6,11 +6,32 @@
 # Modeled on rustfs_omnios_1a.sh's proven pattern (system pkgs -> Rust check
 # -> swap check -> fresh clone -> build), but far simpler: cs-imageindex has
 # none of RustFS's exotic deps (no pulsar/mimalloc/jemalloc/aws-lc-rs), so no
-# source patching is expected. NOT YET VALIDATED on real OmniOS hardware --
-# omni58.189 is currently shut down. First real run will likely surface 1-2
-# small issues (protoc for tract-onnx's prost/protobuf codegen, and/or
-# ureq's TLS backend choice are the two most likely candidates -- flagged
-# below) the same way RustFS's script needed ~13 iterations to get clean.
+# source patching is expected.
+#
+# v0.3 note: RAW photo support (rawloader/imagepipe) is pure Rust and needs
+# nothing extra here. HEIC/HEIF support (the default "heic" cargo feature)
+# links the system libheif C library via pkg-config, and video support
+# shells out to an external ffmpeg/ffprobe at runtime -- both come from the
+# extra.omnios publisher and both install under /opt/ooce, which is NOT on
+# illumos's default pkg-config search path or default runtime linker search
+# path (/lib:/usr/lib only, per crle). Steps 1, 5 and 6 below account for
+# that: PKG_CONFIG_PATH so libheif-sys's build.rs can find libheif.pc at
+# build time, and an -R rpath baked in via RUSTFLAGS so the resulting binary
+# finds libheif.so.1 at run time without the end user needing to set
+# LD_LIBRARY_PATH. Confirmed working on real OmniOS r151058j hardware
+# (192.168.2.189) for v0.3.0: build succeeds, `cs-imageindex --version`
+# runs standalone, and a synthetic ffmpeg-generated test video indexes
+# correctly (duration, creation_time, and ISO-6709 GPS all read correctly).
+# HEIC could not be smoke-tested on illumos itself (no heif-enc/
+# libheif-examples package available there to synthesize a test file), but
+# it shares the identical code path already verified functionally on Linux.
+#
+# Runtime dependency added by v0.3 (beyond what v0.2 needed): the compiled
+# binary now requires ooce/library/libheif to be installed on the target
+# machine (it is dynamically linked, not bundled) for HEIC files to decode.
+# Video support additionally requires ooce/multimedia/ffmpeg to be installed
+# and on PATH (or a bundled ffmpeg/ffprobe next to the binary) -- without
+# it, video files are skipped gracefully with a note printed at startup.
 #
 # Usage:
 #   bash ./cs-imageindex_omnios_1a.sh
@@ -44,18 +65,23 @@ pkg install -q developer/versioning/git 2>/dev/null || true
 pkg install -q developer/rust           2>/dev/null || true
 pkg install -q developer/gcc            2>/dev/null || true
 # protoc: tract-onnx pulls in prost/prost-build for ONNX protobuf parsing.
-# Same requirement RustFS hit for pulsar -- installing proactively rather
-# than waiting for the "protoc not found" cargo build error.
 pkg install -q ooce/developer/protobuf  2>/dev/null || true
+# v0.3: pkg-config (to locate libheif.pc), libheif (HEIC/HEIF decoding,
+# dynamically linked at build+run time), and ffmpeg (video frame/metadata
+# extraction, invoked as an external process at run time only -- not linked).
+pkg install -q developer/pkg-config     2>/dev/null || true
+pkg install -q ooce/library/libheif     2>/dev/null || true
+pkg install -q ooce/multimedia/ffmpeg   2>/dev/null || true
 
-for cmd in gcc git curl protoc; do
+for cmd in gcc git curl protoc pkg-config; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: $cmd not found. Aborting."
         exit 1
     fi
 done
-echo "  GCC:    $(gcc --version | head -1)"
-echo "  protoc: $(protoc --version)"
+echo "  GCC:        $(gcc --version | head -1)"
+echo "  protoc:     $(protoc --version)"
+echo "  pkg-config: $(pkg-config --version)"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -88,8 +114,8 @@ echo ""
 
 # ---------------------------------------------------------------------------
 # 3. Swap check (tract-onnx's dependency tree is small; 4GB should be
-#    ample, but RustFS's experience showed illumos build links can spike --
-#    check cheaply and only add swap if genuinely short)
+#    ample, but illumos build links can spike -- check cheaply and only
+#    add swap if genuinely short)
 # ---------------------------------------------------------------------------
 echo "[3/6] Checking swap..."
 
@@ -99,8 +125,7 @@ echo "  Current swap: ${SWAP_GB}GB"
 
 if [ "$SWAP_GB" -lt 2 ]; then
     echo "  WARNING: less than 2GB swap. If the build OOMs during linking,"
-    echo "           add swap the same way rustfs_omnios_1a.sh does"
-    echo "           (zfs create -V <n>g rpool/swap_build && swap -a ...)."
+    echo "           add swap (zfs create -V <n>g rpool/swap_build && swap -a ...)."
 fi
 echo ""
 
@@ -123,8 +148,7 @@ echo "  -> Commit: $(git log --oneline -1)"
 echo ""
 
 # ---------------------------------------------------------------------------
-# 5. Cargo config (illumos target linker -- same shape as RustFS's, minus
-#    the tokio_unstable/AWS_LC_SYS bits it needed for its own deps)
+# 5. Cargo config (illumos target linker) + libheif env vars
 # ---------------------------------------------------------------------------
 echo "[5/6] Writing .cargo/config.toml..."
 
@@ -136,6 +160,16 @@ ar = "ar"
 CARGOEOF
 
 echo "  -> .cargo/config.toml written"
+
+# v0.3: extra.omnios packages (libheif) install under /opt/ooce, which is
+# not on the default pkg-config search path -- point pkg-config at it so
+# libheif-sys's build.rs can find libheif.pc. Also bake an -R rpath into
+# the binary via RUSTFLAGS so it finds libheif.so.1 at run time without
+# requiring LD_LIBRARY_PATH to be set for end users.
+export PKG_CONFIG_PATH="/opt/ooce/lib/amd64/pkgconfig:/opt/ooce/lib/pkgconfig"
+export RUSTFLAGS="-C link-args=-Wl,-R/opt/ooce/lib/amd64"
+echo "  -> PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+echo "  -> RUSTFLAGS=$RUSTFLAGS"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -157,15 +191,17 @@ if ! cargo build --release 2>&1 | tee -a "$LOGFILE"; then
     grep "^error" "$LOGFILE" | tail -20
     echo "============================================================"
     echo ""
-    echo " Known first-run candidates (per RustFS precedent -- neither"
-    echo " confirmed nor ruled out yet, since this hasn't run on real"
-    echo " OmniOS hardware):"
+    echo " Known candidates:"
     echo "   - prost-build/protoc: if it still can't find protoc despite"
     echo "     step 1, set PROTOC=/opt/ooce/bin/protoc explicitly."
     echo "   - ureq's TLS backend: if it pulls in openssl-sys/native-tls"
-    echo "     instead of rustls, that's the aws-lc-rs-style illumos pain"
-    echo "     RustFS hit -- pin ureq's rustls feature explicitly in"
+    echo "     instead of rustls, pin ureq's rustls feature explicitly in"
     echo "     Cargo.toml instead of the default TLS feature."
+    echo "   - libheif-sys / pkg-config: if it still can't find libheif.pc,"
+    echo "     run 'find / -name libheif.pc' and adjust PKG_CONFIG_PATH"
+    echo "     above to match (paths can shift between OmniOS releases)."
+    echo "     As a last resort, build with --no-default-features to skip"
+    echo "     HEIC support entirely (HEIC files are then just skipped)."
     echo "============================================================"
     exit 1
 fi
@@ -176,10 +212,15 @@ if [ -f "$BINARY" ]; then
     echo ""
     echo "============================================================"
     echo " BUILD SUCCESSFUL  [1a]"
-    echo " Started:  $START_TS"
+    echo " Started: $START_TS"
     echo " Finished: $(date '+%Y-%m-%d %H:%M:%S %Z')"
     echo " Binary:   $BINARY"
     echo " Size:     $(ls -lh $BINARY | awk '{print $5}')"
+    echo ""
+    echo " Runtime dependencies on this machine (dynamically linked/"
+    echo " shelled out to, not bundled): ooce/library/libheif (HEIC),"
+    echo " ooce/multimedia/ffmpeg (video, optional -- skipped gracefully"
+    echo " if absent)."
     echo "============================================================"
 else
     echo "BUILD FAILED: binary not found."

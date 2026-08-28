@@ -1,13 +1,24 @@
 [package]
 name = "cs-imageindex"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "Index a folder of photos: EXIF date/GPS, an LLM scene description, and face recognition against reference photos -- single static binary."
+description = "Index a folder of photos and videos: EXIF/container date/GPS, an LLM scene description, and face recognition against reference photos -- single static binary."
 license = "BSD-2-Clause"
 
 [[bin]]
 name = "cs-imageindex"
 path = "src/main.rs"
+
+[features]
+default = ["heic"]
+# HEIC/HEIF support links the system libheif C library (not pure Rust).
+# Confirmed buildable on Linux, Windows, macOS and illumos/OmniOS (the
+# latter needs PKG_CONFIG_PATH/RUSTFLAGS set -- see illumos/*.sh and the
+# README's "Building on illumos/OmniOS" section). Disable with
+# --no-default-features on a platform where libheif genuinely isn't
+# available/buildable -- HEIC files are then skipped like any other
+# unreadable file instead of failing the build.
+heic = ["dep:libheif-rs"]
 
 [dependencies]
 tract-onnx = "0.21"
@@ -20,6 +31,9 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 csv = "1"
 rayon = "1"
+rawloader = "0.37.2"
+imagepipe = "0.5.1"
+libheif-rs = { version = "3.0.0", optional = true }
 
 [profile.release]
 opt-level = 3

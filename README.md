@@ -55,14 +55,34 @@ Index a folder of photos and write one CSV row per image with:
 
 ## Supported formats
 
-**v0.2 (current):** still images only —  `.jpg` / `.jpeg`, `.png`, `.bmp`,
-`.tif` / `.tiff` (matched by file content, not just the extension).
+**Still images:** `.jpg` / `.jpeg`, `.png`, `.bmp`, `.tif` / `.tiff`
+(matched by file content, not just the extension).
 
-**Planned for v0.3:** video files — `.mp4`, `.mov`, `.avi` (frame/thumbnail
-extraction + container metadata such as creation date and GPS, run through
-the same face/vision/quality pipeline as still images). Not yet implemented.
+**RAW photos (v0.3):** `.cr2` / `.cr3` (Canon), `.nef` (Nikon), `.arw`
+(Sony), `.dng` (Adobe/generic), `.orf` (Olympus), `.rw2` (Panasonic),
+`.raf` (Fujifilm), `.pef` (Pentax), `.srw` (Samsung) — decoded with the
+pure-Rust `rawloader`/`imagepipe` crates, no external tools or system
+libraries required.
 
-Single static binary, no runtime to install. Face detection/recognition
+**HEIC/HEIF (v0.3):** `.heic`, `.heif` (the default photo format on
+recent iPhones) — decoded via the system `libheif` C library (the
+`heic` cargo feature, on by default). Embedded rotation/mirroring/
+cropping is applied automatically. Requires `libheif` to be present on
+the machine the binary runs on (see platform notes below); if it isn't,
+HEIC/HEIF files are skipped like any other unreadable file rather than
+failing the whole run.
+
+**Video (v0.3):** `.mp4`, `.mov`, `.avi`, `.m4v`, `.mkv` — one
+representative frame is extracted and run through the same face/vision/
+quality pipeline as a still image, and container metadata (creation
+date, duration, and GPS — including the ISO-6709 location tag iPhone/
+QuickTime `.mov` files use) is read the same way EXIF is for photos.
+Requires `ffmpeg`/`ffprobe` to be on `PATH` (or bundled next to the
+binary); if neither is found, video files are skipped with a one-line
+note printed at startup, and everything else still runs normally.
+
+Single static binary for the still-image and RAW paths, no runtime to
+install. Face detection/recognition
 (YuNet + SFace, both ONNX) runs through [`tract`](https://github.com/sonos/tract)
 (pure Rust, no OpenCV/cgo/onnxruntime dependency) — the exact detection and
 alignment math is a from-scratch port of OpenCV's own upstream C++
@@ -211,7 +231,22 @@ redistributable under their own permissive licenses — see
 
 See `illumos/cs-imageindex_omnios_1a.sh` (modeled on RustFS's
 `rustfs_omnios_1a.sh` build script) — built and tested on real OmniOS
-r151058j hardware.
+r151058j hardware, including v0.3's RAW/HEIC/video support.
+
+RAW support needs nothing extra (pure Rust). HEIC support links
+`ooce/library/libheif`, which OmniOS installs under `/opt/ooce` — a
+location that is on neither the default `pkg-config` search path nor
+the default runtime linker search path. The build script therefore sets
+`PKG_CONFIG_PATH=/opt/ooce/lib/amd64/pkgconfig:/opt/ooce/lib/pkgconfig`
+so `libheif-sys` can find `libheif.pc` at build time, and bakes an
+`-R/opt/ooce/lib/amd64` rpath into the binary via `RUSTFLAGS` so it
+finds `libheif.so.1` at run time without the end user needing to set
+`LD_LIBRARY_PATH`. Video support additionally needs
+`ooce/multimedia/ffmpeg` installed for video files to be indexed (both
+packages come from the `extra.omnios` publisher). Unlike the Linux/
+Windows/macOS builds, the illumos binary is therefore not fully
+dependency-free — it dynamically links `libheif` and shells out to
+`ffmpeg`, both of which must be present on the machine it runs on.
 
 ## Continuous integration / releases
 
@@ -225,15 +260,29 @@ platforms. The illumos binary is built by hand with
 `illumos/cs-imageindex_omnios_1a.sh` and uploaded to the same release
 separately (`gh release upload <tag> cs-imageindex-illumos-x86_64.tar.gz`).
 
+Note: the CI-built Linux/Windows/macOS binaries do not currently bundle
+`ffmpeg`/`ffprobe` — video files are skipped on those platforms unless
+the user has `ffmpeg` installed and on `PATH` (see Supported formats
+above). Bundling static `ffmpeg` binaries into those release archives is
+a planned follow-up, not yet implemented.
+
 ## Status
 
-Validated end-to-end on Linux (.112) and OmniOS/illumos (.189, real
-hardware, first-attempt clean builds both times) — EXIF/GPS, reverse
-geocoding, vision descriptions with structured tags/OCR, quality signals,
-and a confirmed real face-name match (not just a structurally plausible
-pipeline). See the project's napp-it CS `howto.ai/cs-imageindex.info` doc
-for the full development history, including the two real bugs found and
-fixed along the way (image-format-by-extension, missing EXIF-orientation
+v0.3.0: RAW/HEIC/video support validated end-to-end on both Linux (.112)
+and OmniOS/illumos (.189, real hardware) — synthetic HEIC (Linux) and
+video (both platforms) test files correctly produce container/GPS
+metadata, run through the quality/dedup pipeline, and cross-format
+near-duplicate grouping works even between a JPEG/HEIC/video of the same
+source photo.
+
+v0.2.0 baseline: validated end-to-end on Linux (.112) and OmniOS/illumos
+(.189, real hardware, first-attempt clean builds both times) — EXIF/GPS,
+reverse geocoding, vision descriptions with structured tags/OCR, quality
+signals, and a confirmed real face-name match (not just a structurally
+plausible pipeline). See the project's napp-it CS
+`howto.ai/cs-imageindex.info` doc for the full development history,
+including the two real bugs found and fixed along the way
+(image-format-by-extension, missing EXIF-orientation
 handling).
 
 ## License
