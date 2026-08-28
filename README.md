@@ -1,6 +1,6 @@
 # cs-imageindex
 
-## Project concept
+## Project concept, pre-release
 
 Suggested folder layout, e.g.:
 
