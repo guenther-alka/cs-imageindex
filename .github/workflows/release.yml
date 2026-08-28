@@ -58,11 +58,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build (release)
-        # Default features include the "heic" feature, which decodes HEIC/HEIF
-        # via the system libheif loaded lazily at runtime (dlopen/LoadLibrary,
-        # libloading crate -- no build-time system dependency). HEIC works on
-        # any machine that has libheif installed and is skipped otherwise.
-        # RAW (pure Rust) and video (bundled ffmpeg) are unaffected.
+        # HEIC/HEIF is decoded via the bundled ffmpeg (ISOBMFF/mov demuxer +
+        # built-in HEVC decoder) -- no system libheif dependency. RAW (pure
+        # Rust) and video (bundled ffmpeg) are handled the same way.
         run: cargo build --release --target ${{ matrix.target }}
 
       # ---- build + bundle a minimal static LGPL ffmpeg/ffprobe into dist/ --
@@ -140,10 +138,9 @@ jobs:
             images, RAW photos, and video -- a minimal static LGPL
             ffmpeg/ffprobe is bundled in each archive (built from source by
             ci/build-ffmpeg.sh), so video indexing works out of the box.
-            HEIC/HEIF is decoded via the system libheif C library, loaded
-            lazily at runtime (no build-time dependency): it works on machines
-            that have libheif installed (e.g. apt/brew) and HEIC/HEIF files
-            are skipped otherwise.
+            HEIC/HEIF is decoded via the bundled ffmpeg (ISOBMFF/mov demuxer +
+            built-in HEVC decoder) -- no system libheif needed, so it works
+            out of the box on all platforms.
 
             illumos/OmniOS is NOT built by CI (GitHub Actions has no runner
             for illumos) -- built manually via

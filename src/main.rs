@@ -3,8 +3,6 @@ mod dedup;
 mod exif_read;
 mod face;
 mod geocode;
-#[cfg(feature = "heic")]
-mod heic;
 mod media;
 mod quality;
 mod vision;
@@ -236,6 +234,25 @@ fn process_one(path: &PathBuf, ctx: &SharedCtx) -> RowRecord {
         exif.gps_lat = meta.gps.map(|(lat, _)| lat);
         exif.gps_lon = meta.gps.map(|(_, lon)| lon);
         (img, exif, meta.duration_secs)
+    } else if kind == media::MediaKind::Heic {
+        // HEIC/HEIF (e.g. iPhone photos): the bundled ffmpeg decodes these via
+        // its ISOBMFF (mov) demuxer + built-in HEVC decoder -- no system
+        // libheif needed. Extract one frame like video; EXIF metadata (date,
+        // GPS, camera) is read directly from the HEIF file's Exif box.
+        let Some(ffmpeg) = &ctx.ffmpeg else {
+            return err_row(
+                rel_path,
+                "[skipped: ffmpeg not found -- HEIC support needs the bundled ffmpeg \
+                 (see README \"Supported formats\")]"
+                    .to_string(),
+            );
+        };
+        let img = match media::extract_video_frame(path, ffmpeg, None) {
+            Ok(im) => im,
+            Err(e) => return err_row(rel_path, format!("[HEIC read error: {e}]")),
+        };
+        let exif = exif_read::read_all(path);
+        (img, exif, None)
     } else {
         let img = match media::open_still_image(path) {
             Ok(im) => im,

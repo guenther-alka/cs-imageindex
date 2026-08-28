@@ -5,11 +5,10 @@
 //   - RAW photos (CR2/CR3/NEF/ARW/DNG/ORF/RW2/RAF/PEF/SRW): decoded via
 //     rawloader + imagepipe, both pure Rust -- no system libraw/dcraw
 //     dependency, keeps the "single static binary" property intact.
-//   - HEIC/HEIF: decoded via the system `libheif` C library, loaded lazily
-//     at runtime (dlopen/LoadLibrary -- see the `heic` module); no build-time
-//     system dependency, gated behind the `heic` Cargo feature (on by
-//     default). If libheif is missing at runtime, HEIC files are skipped like
-//     any other unreadable file instead of failing the whole run.
+//   - HEIC/HEIF: decoded via the bundled ffmpeg (its ISOBMFF/mov demuxer +
+//     built-in HEVC decoder) -- no system libheif dependency. EXIF metadata
+//     is read directly from the HEIF file via kamadak-exif. If ffmpeg is
+//     missing, HEIC files are skipped like any other unreadable file.
 //   - Video (MP4/MOV/AVI/M4V/MKV): a representative frame is extracted via
 //     an external `ffmpeg` binary (shelled out to, not linked) and container
 //     metadata (creation time, duration, GPS if present) via `ffprobe`.
@@ -89,25 +88,13 @@ pub fn open_raw(path: &Path) -> Result<DynamicImage, String> {
         .ok_or_else(|| "RAW decode: pixel buffer/size mismatch".to_string())
 }
 
-/// Decode a HEIC/HEIF photo via the system libheif C library, loaded lazily
-/// at runtime (see the `heic` module). Compiled out entirely without the
-/// `heic` feature.
-#[cfg(feature = "heic")]
-pub fn open_heic(path: &Path) -> Result<DynamicImage, String> {
-    crate::heic::open_heic(path)
-}
-
-#[cfg(not(feature = "heic"))]
-pub fn open_heic(_path: &Path) -> Result<DynamicImage, String> {
-    Err("HEIC support not compiled into this binary (built without the \"heic\" feature)".to_string())
-}
-
 /// Open any supported still-image format -- JPEG/PNG/BMP/TIFF (via the
-/// `image` crate, with EXIF-orientation correction), RAW, or HEIC.
+/// `image` crate, with EXIF-orientation correction) or RAW. HEIC/HEIF is
+/// decoded via the bundled ffmpeg in process_one (main.rs), not here.
 pub fn open_still_image(path: &Path) -> Result<DynamicImage, String> {
     match kind(path) {
         MediaKind::Raw => open_raw(path),
-        MediaKind::Heic => open_heic(path),
+        MediaKind::Heic => Err("HEIC: decoded via the bundled ffmpeg (not the image crate)".to_string()),
         _ => face::open_image(path).map_err(|e| e.to_string()),
     }
 }

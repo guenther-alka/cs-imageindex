@@ -9,14 +9,6 @@ license = "BSD-2-Clause"
 name = "cs-imageindex"
 path = "src/main.rs"
 
-[features]
-default = ["heic"]
-# HEIC/HEIF support decodes via the system libheif C library, loaded lazily
-# at runtime (dlopen/LoadLibrary via the libloading crate) -- no build-time
-# system dependency. If libheif is missing on the target machine, the binary
-# still runs and HEIC/HEIF files are simply skipped (see README).
-heic = ["dep:libloading"]
-
 [dependencies]
 tract-onnx = "0.21"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "tiff"] }
