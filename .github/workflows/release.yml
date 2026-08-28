@@ -37,10 +37,11 @@ jobs:
             target: aarch64-apple-darwin
             artifact: cs-imageindex-macos-arm64
             bin: cs-imageindex
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: cs-imageindex-macos-x86_64
             bin: cs-imageindex
+            cross: true
 
     runs-on: ${{ matrix.os }}
 
