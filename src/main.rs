@@ -1,6 +1,8 @@
 mod config;
 mod exif_read;
 mod face;
+mod geocode;
+mod quality;
 mod vision;
 
 use base64::Engine;
@@ -10,8 +12,10 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 /// cs-imageindex -- read all images in a folder, build an index with
-/// location (EXIF GPS), a scene description (vision-capable LLM) and
-/// recognized people (face matching against reference/<name>/*.jpg).
+/// location (EXIF GPS + reverse-geocoded place name), a scene description
+/// with tags/OCR text (vision-capable LLM), recognized people (face
+/// matching against reference/<name>/*.jpg), and a few cheap image-quality
+/// signals (blur estimate, perceptual hash for near-duplicate detection).
 /// Standalone single-binary port of the original Python/OpenCV prototype
 /// (cs_26.08.28) -- see README for the full background.
 #[derive(Parser, Debug)]
@@ -65,6 +69,11 @@ struct Args {
     /// Skip the scene-description step entirely (location + faces only)
     #[arg(long)]
     no_vision: bool,
+
+    /// Skip reverse-geocoding GPS coordinates to a place name (no network
+    /// calls to the public Nominatim/OpenStreetMap API)
+    #[arg(long)]
+    no_geocode: bool,
 
     /// Print an example --config file and exit
     #[arg(long)]
@@ -130,6 +139,7 @@ fn main() {
         );
     }
     let vision_active = use_vision && (use_ollama || vcfg.is_usable());
+    let geocode_active = !args.no_geocode;
 
     let models_dir = args.models_dir.clone().unwrap_or_else(|| {
         let mut d = std::env::current_exe().unwrap_or_default();
@@ -189,8 +199,12 @@ fn main() {
 
     let out_file = std::fs::File::create(&out).expect("cannot create output CSV");
     let mut w = csv::Writer::from_writer(out_file);
-    w.write_record(["file", "date_taken", "gps_lat", "gps_lon", "people", "unknown_faces", "description"])
-        .unwrap();
+    w.write_record([
+        "file", "date_taken", "gps_lat", "gps_lon", "place", "camera", "resolution",
+        "orientation", "flash", "blur_score", "phash", "is_screenshot", "people",
+        "unknown_faces", "face_count", "tags", "ocr_text", "description",
+    ])
+    .unwrap();
 
     for (i, path) in files.iter().enumerate() {
         let rel = path.strip_prefix(&folder).unwrap_or(path);
@@ -199,27 +213,55 @@ fn main() {
         let img = match face::open_image(path) {
             Ok(im) => im,
             Err(e) => {
-                w.write_record([
-                    rel.to_string_lossy().as_ref(),
-                    "", "", "", "", "",
-                    &format!("[read error: {e}]"),
-                ])
-                .unwrap();
+                let mut rec = vec![rel.to_string_lossy().to_string()];
+                rec.extend(std::iter::repeat(String::new()).take(16));
+                rec.push(format!("[read error: {e}]"));
+                w.write_record(&rec).unwrap();
                 w.flush().ok();
                 continue;
             }
         };
 
-        let dt = exif_read::read_datetime(path);
-        let (lat, lon) = exif_read::read_gps(path);
+        let exif = exif_read::read_all(path);
+
+        let (width, height) = (img.width(), img.height());
+        let resolution = format!("{width}x{height}");
+        let orientation = if width > height {
+            "landscape"
+        } else if height > width {
+            "portrait"
+        } else {
+            "square"
+        };
+        let camera = format!("{} {}", exif.camera_make, exif.camera_model).trim().to_string();
+        let flash = match exif.flash_fired {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "",
+        };
+        let blur = quality::blur_score(&img);
+        let phash = quality::perceptual_hash(&img);
+        let is_screenshot = if exif_read::is_screenshot_heuristic(&exif) { "yes" } else { "" };
+
+        let place = match (exif.gps_lat, exif.gps_lon) {
+            (Some(lat), Some(lon)) if geocode_active => {
+                let p = geocode::reverse_geocode(lat, lon).unwrap_or_default();
+                // Respect Nominatim's ~1 req/sec usage policy -- only paid
+                // for on photos that actually carry GPS data.
+                std::thread::sleep(std::time::Duration::from_millis(1100));
+                p
+            }
+            _ => String::new(),
+        };
 
         let (matched_names, unmatched) = if let (Some(y), Some(s)) = (&yunet, &sface) {
             face::identify_faces(&img, y, s, &reference_people).unwrap_or_default()
         } else {
             (Vec::new(), 0)
         };
+        let face_count = matched_names.len() + unmatched;
 
-        let desc = if vision_active {
+        let vres = if vision_active {
             let data_url = image_to_data_url(&img);
             if use_ollama {
                 vision::describe_ollama(&data_url, &args.ollama, &args.ollama_model)
@@ -227,17 +269,28 @@ fn main() {
                 vision::describe_openai_compatible(&data_url, &vcfg)
             }
         } else {
-            String::new()
+            vision::VisionResult::default()
         };
 
         w.write_record([
             rel.to_string_lossy().as_ref(),
-            &dt,
-            &lat.map(|v| format!("{v:.6}")).unwrap_or_default(),
-            &lon.map(|v| format!("{v:.6}")).unwrap_or_default(),
+            &exif.datetime,
+            &exif.gps_lat.map(|v| format!("{v:.6}")).unwrap_or_default(),
+            &exif.gps_lon.map(|v| format!("{v:.6}")).unwrap_or_default(),
+            &place,
+            &camera,
+            &resolution,
+            orientation,
+            flash,
+            &format!("{blur:.1}"),
+            &format!("{phash:016x}"),
+            is_screenshot,
             &matched_names.join(", "),
             &(if unmatched > 0 { unmatched.to_string() } else { String::new() }),
-            &desc,
+            &(if face_count > 0 { face_count.to_string() } else { String::new() }),
+            &vres.tags,
+            &vres.ocr_text,
+            &vres.description,
         ])
         .unwrap();
         w.flush().ok();

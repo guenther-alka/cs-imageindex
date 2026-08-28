@@ -4,16 +4,40 @@ Index a folder of photos and write one CSV row per image with:
 
 - `date_taken` — EXIF `DateTimeOriginal`
 - `gps_lat` / `gps_lon` — EXIF GPS, decimal degrees (empty if the photo has none)
-- `description` — a one-sentence scene description from a vision-capable LLM
-  (indoor/outdoor, type of place, what's happening)
+- `place` — reverse-geocoded place name (e.g. "München, Deutschland") from the
+  GPS coordinates, via OpenStreetMap/Nominatim (best-effort, empty if no GPS
+  or offline)
+- `camera` — EXIF Make + Model (e.g. "samsung SM-G981B")
+- `resolution` — pixel dimensions, e.g. "4032x3024"
+- `orientation` — `landscape` / `portrait` / `square`
+- `flash` — `yes` / `no` / empty if the EXIF Flash tag is absent
+- `blur_score` — Laplacian-variance sharpness estimate (higher = sharper;
+  relative to this tool's own scale, not an absolute standard)
+- `phash` — 64-bit perceptual hash (hex) for near-duplicate/burst-shot
+  detection (compare via Hamming distance)
+- `is_screenshot` — `yes` if the photo has no camera Make/Model EXIF at all
+  (heuristic — catches screenshots/downloaded images, not foolproof)
 - `people` — comma-separated names matched against reference photos
 - `unknown_faces` — count of detected-but-unmatched faces
+- `face_count` — total faces detected (matched + unmatched)
+- `tags` — comma-separated scene tags from the vision LLM (e.g. "outdoor,
+  nature, road")
+- `ocr_text` — any text the vision LLM could read in the photo (signs,
+  documents, screens), empty if none
+- `description` — a one-sentence scene description from a vision-capable LLM
 
 Single static binary, no runtime to install. Face detection/recognition
 (YuNet + SFace, both ONNX) runs through [`tract`](https://github.com/sonos/tract)
 (pure Rust, no OpenCV/cgo/onnxruntime dependency) — the exact detection and
 alignment math is a from-scratch port of OpenCV's own upstream C++
-(`face_detect.cpp` / `face_recognize.cpp`), not a black box.
+(`face_detect.cpp` / `face_recognize.cpp`), not a black box. `tags`/`ocr_text`/
+`description` come from a single vision-LLM call per photo (no extra API
+calls); `blur_score`/`phash`/`is_screenshot` are computed locally with no
+network and no extra dependencies.
+
+Reverse geocoding uses the public Nominatim API and respects its usage
+policy (~1 request/second, descriptive User-Agent) — disable with
+`--no-geocode` if you'd rather not make that network call.
 
 ## Usage
 
