@@ -148,3 +148,46 @@ pub fn describe_ollama(data_url: &str, endpoint: &str, model: &str) -> VisionRes
     let content = data["response"].as_str().unwrap_or("").trim();
     parse_structured(content)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_well_formed_response() {
+        let content = "DESCRIPTION: A dog in a park.\nTAGS: outdoor, animal, park\nTEXT: none";
+        let r = parse_structured(content);
+        assert_eq!(r.description, "A dog in a park.");
+        assert_eq!(r.tags, "outdoor, animal, park");
+        assert_eq!(r.ocr_text, "");
+    }
+
+    #[test]
+    fn falls_back_to_raw_content_when_format_not_followed() {
+        let content = "Just a plain sentence with no labels.";
+        let r = parse_structured(content);
+        assert_eq!(r.description, content);
+        assert!(r.tags.is_empty());
+    }
+
+    #[test]
+    fn text_field_with_actual_text_is_kept() {
+        let content = "DESCRIPTION: A street sign.\nTAGS: outdoor, sign\nTEXT: Main Street";
+        let r = parse_structured(content);
+        assert_eq!(r.ocr_text, "Main Street");
+    }
+
+    #[test]
+    fn tidy_reasoning_fallback_uses_last_nonempty_line() {
+        let reasoning = "Let me think...\n\nThe photo shows a beach at sunset.\n";
+        assert_eq!(tidy_reasoning_fallback(reasoning), "The photo shows a beach at sunset.");
+    }
+
+    #[test]
+    fn tidy_reasoning_fallback_handles_empty_input() {
+        assert_eq!(
+            tidy_reasoning_fallback(""),
+            "[no description -- model used the full token budget on internal reasoning]"
+        );
+    }
+}

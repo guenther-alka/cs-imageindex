@@ -15,6 +15,9 @@ Index a folder of photos and write one CSV row per image with:
   relative to this tool's own scale, not an absolute standard)
 - `phash` — 64-bit perceptual hash (hex) for near-duplicate/burst-shot
   detection (compare via Hamming distance)
+- `duplicate_group` — a shared group number for photos whose `phash` is
+  within `--dedup-threshold` Hamming distance of each other (empty if the
+  photo has no near-duplicate in this run)
 - `is_screenshot` — `yes` if the photo has no camera Make/Model EXIF at all
   (heuristic — catches screenshots/downloaded images, not foolproof)
 - `people` — comma-separated names matched against reference photos
@@ -36,8 +39,17 @@ calls); `blur_score`/`phash`/`is_screenshot` are computed locally with no
 network and no extra dependencies.
 
 Reverse geocoding uses the public Nominatim API and respects its usage
-policy (~1 request/second, descriptive User-Agent) — disable with
-`--no-geocode` if you'd rather not make that network call.
+policy (~1 request/second, descriptive User-Agent, and an in-process cache
+keyed to ~1km so repeat lookups near the same spot don't re-hit the
+network) — disable with `--no-geocode` if you'd rather not make that
+network call at all.
+
+Photos are processed on a small worker-thread pool (`--threads`, default up
+to 4) — EXIF/quality/face-detection work runs in parallel, and vision/
+geocode network calls are safely shared across threads (geocoding is
+globally rate-limited regardless of thread count; each thread gets its own
+vision API connection). Interrupted a big run? `--resume` picks up where an
+existing `--out` CSV left off instead of starting over.
 
 ## Usage
 
@@ -80,6 +92,17 @@ Options:
       --no-geocode                   Skip reverse-geocoding GPS coordinates to a place
                                       name (no network calls to the public Nominatim/
                                       OpenStreetMap API)
+      --no-dedup                     Skip near-duplicate/burst-shot grouping (saves an
+                                      O(n^2) hash comparison pass on very large folders)
+      --dedup-threshold <N>          Hamming-distance threshold for duplicate grouping
+                                      (0-64, lower = stricter) [default: 6]
+      --threads <N>                  Worker threads for the per-photo pipeline. 0 = auto
+                                      (up to 4 by default, so as not to hammer a vision
+                                      API/Nominatim with too much concurrency) [default: 0]
+      --resume                       Resume an interrupted run: skip files already in an
+                                      existing --out CSV and append new rows instead of
+                                      overwriting (duplicate-group ids only apply within
+                                      the newly processed batch, not across resumes)
       --print-config-example         Print an example --config file and exit
   -h, --help                         Print help
   -V, --version                      Print version
@@ -118,7 +141,29 @@ cs-imageindex --folder ./photos --out index.csv \
     --provider openai-compatible \
     --endpoint https://api.deepseek.com/chat/completions \
     --model deepseek-v4-flash-vision-exp --api-key sk-...
+
+# Resume an interrupted run (e.g. after a crash halfway through a big folder)
+cs-imageindex --folder ./photos --out index.csv --resume
+
+# More worker threads (e.g. a local Ollama instance that can take the load)
+cs-imageindex --folder ./photos --out index.csv --threads 8 \
+    --ollama http://127.0.0.1:11434
+
+# Stricter duplicate grouping, or skip it entirely
+cs-imageindex --folder ./photos --out index.csv --dedup-threshold 2
+cs-imageindex --folder ./photos --out index.csv --no-dedup
 ```
+
+## Running the test suite
+
+```
+cargo test
+```
+
+Covers the pure-logic parts that don't need models, a network, or sample
+photos: vision-response parsing (`vision.rs`), the blur/hash quality
+signals (`quality.rs`), duplicate grouping (`dedup.rs`), and the geocoding
+cache key (`geocode.rs`).
 
 ## Models
 
@@ -132,15 +177,31 @@ redistributable under their own permissive licenses — see
 ## Building on illumos/OmniOS
 
 See `illumos/cs-imageindex_omnios_1a.sh` (modeled on RustFS's
-`rustfs_omnios_1a.sh` build script).
+`rustfs_omnios_1a.sh` build script) — built and tested on real OmniOS
+r151058j hardware.
+
+## Continuous integration / releases
+
+`.github/workflows/release.yml` builds Linux, Windows and macOS
+(arm64 + x86_64) binaries on GitHub-hosted runners and attaches them to the
+GitHub Release whenever a `v*` tag is pushed. illumos/OmniOS is
+deliberately NOT part of this workflow: GitHub Actions' runner binary has
+no illumos/SunOS build at all, so a self-hosted runner on real OmniOS
+hardware isn't actually possible the way it is for the other three
+platforms. The illumos binary is built by hand with
+`illumos/cs-imageindex_omnios_1a.sh` and uploaded to the same release
+separately (`gh release upload <tag> cs-imageindex-illumos-x86_64.tar.gz`).
 
 ## Status
 
-Proof-of-concept stage — validated on Linux (EXIF/GPS, vision descriptions,
-and structurally the face pipeline via `tract`), not yet cross-checked
-pixel-for-pixel against the original Python/OpenCV prototype on real photos,
-and not yet built/tested on illumos. See `illumos/` and the project's
-napp-it CS `howto.ai/cs-imageindex.info` doc for the full background.
+Validated end-to-end on Linux (.112) and OmniOS/illumos (.189, real
+hardware, first-attempt clean builds both times) — EXIF/GPS, reverse
+geocoding, vision descriptions with structured tags/OCR, quality signals,
+and a confirmed real face-name match (not just a structurally plausible
+pipeline). See the project's napp-it CS `howto.ai/cs-imageindex.info` doc
+for the full development history, including the two real bugs found and
+fixed along the way (image-format-by-extension, missing EXIF-orientation
+handling).
 
 ## License
 

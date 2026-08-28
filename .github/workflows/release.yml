@@ -1,0 +1,105 @@
+name: Release
+
+# Builds cs-imageindex for Linux, Windows and macOS on GitHub-hosted runners
+# and attaches the binaries to the GitHub Release for the pushed tag.
+#
+# illumos/OmniOS is deliberately NOT part of this workflow: GitHub Actions'
+# runner binary (actions/runner) has no illumos/SunOS build at all, so a
+# "self-hosted runner on omni58.189" is not actually possible the way it is
+# for Linux/Windows/macOS. The illumos build stays a manual, documented
+# process -- see illumos/cs-imageindex_omnios_1a.sh and
+# data/howto.ai/cs-imageindex.info in the napp-it CS project for the full
+# background. After this workflow finishes a release, build illumos by hand
+# with that script and upload the resulting tarball to the same release
+# (gh release upload <tag> cs-imageindex-illumos-x86_64.tar.gz).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: cs-imageindex-linux-x86_64
+            bin: cs-imageindex
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: cs-imageindex-windows-x86_64
+            bin: cs-imageindex.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: cs-imageindex-macos-arm64
+            bin: cs-imageindex
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: cs-imageindex-macos-x86_64
+            bin: cs-imageindex
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build (release)
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} dist/
+          cp README.md LICENSE dist/
+          mkdir -p dist/models
+          cp models/*.onnx models/LICENSE-*.txt dist/models/
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a ../${{ matrix.artifact }}.zip .
+          else
+            tar -czf ../${{ matrix.artifact }}.tar.gz .
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.zip
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create/update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            Prebuilt binaries for Linux, Windows and macOS (arm64 + x86_64),
+            built automatically by this workflow.
+
+            illumos/OmniOS is NOT built by CI (GitHub Actions has no runner
+            for illumos) -- built manually via
+            illumos/cs-imageindex_omnios_1a.sh and uploaded to this release
+            separately when available.

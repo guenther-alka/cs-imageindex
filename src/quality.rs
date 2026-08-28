@@ -58,3 +58,46 @@ pub fn perceptual_hash(img: &DynamicImage) -> u64 {
     }
     hash
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::RgbImage;
+
+    #[test]
+    fn flat_image_has_near_zero_blur_score() {
+        // A perfectly flat image has zero edge content -- blur_score should
+        // be (very close to) zero regardless of which flat color is used.
+        let img = DynamicImage::ImageRgb8(RgbImage::from_pixel(50, 50, image::Rgb([128, 128, 128])));
+        let score = blur_score(&img);
+        assert!(score < 0.001, "expected ~0 for a flat image, got {score}");
+    }
+
+    #[test]
+    fn checkerboard_has_higher_blur_score_than_flat() {
+        let flat = DynamicImage::ImageRgb8(RgbImage::from_pixel(50, 50, image::Rgb([128, 128, 128])));
+        let mut checker = RgbImage::new(50, 50);
+        for (x, y, px) in checker.enumerate_pixels_mut() {
+            *px = if (x + y) % 2 == 0 { image::Rgb([0, 0, 0]) } else { image::Rgb([255, 255, 255]) };
+        }
+        let checker = DynamicImage::ImageRgb8(checker);
+        assert!(blur_score(&checker) > blur_score(&flat));
+    }
+
+    #[test]
+    fn identical_images_produce_identical_hash() {
+        let img = DynamicImage::ImageRgb8(RgbImage::from_pixel(64, 64, image::Rgb([10, 200, 30])));
+        assert_eq!(perceptual_hash(&img), perceptual_hash(&img.clone()));
+    }
+
+    #[test]
+    fn very_different_images_produce_different_hashes() {
+        let dark = DynamicImage::ImageRgb8(RgbImage::from_pixel(64, 64, image::Rgb([0, 0, 0])));
+        let mut half = RgbImage::new(64, 64);
+        for (x, _y, px) in half.enumerate_pixels_mut() {
+            *px = if x < 32 { image::Rgb([0, 0, 0]) } else { image::Rgb([255, 255, 255]) };
+        }
+        let half = DynamicImage::ImageRgb8(half);
+        assert_ne!(perceptual_hash(&dark), perceptual_hash(&half));
+    }
+}
