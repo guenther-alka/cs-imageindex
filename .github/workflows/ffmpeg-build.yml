@@ -1,0 +1,70 @@
+name: Build ffmpeg (one-off)
+
+# Builds the prebuilt static LGPL ffmpeg/ffprobe bundles that the Release
+# workflow embeds into the cs-imageindex archives.
+#
+# Run manually (workflow_dispatch) whenever ffmpeg should be updated, then
+# upload the resulting artifacts to the FFMPEG_ASSET_TAG release used by
+# release.yml:
+#   gh run download <run-id> --repo guenther-alka/cs-imageindex
+#   gh release upload v0.3.0 --repo guenther-alka/cs-imageindex \
+#       cs-imageindex-ffmpeg-*.tar.gz --clobber
+#
+# illumos is not built here -- it is built by hand on the illumos build host
+# (see illumos/cs-imageindex_omnios_1a.sh and ci/build-ffmpeg.sh).
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-ffmpeg:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: cs-imageindex-ffmpeg-linux.amd64
+          - os: windows-latest
+            artifact: cs-imageindex-ffmpeg-mswin.amd64
+          - os: macos-latest
+            artifact: cs-imageindex-ffmpeg-darwin.arm64
+          - os: macos-13
+            artifact: cs-imageindex-ffmpeg-darwin.amd64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSYS2 (Windows ffmpeg toolchain)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-nasm
+            make
+
+      - name: Install ffmpeg build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Build ffmpeg bundle (ci/build-ffmpeg.sh)
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+        run: |
+          rm -rf /tmp/ffdist
+          bash ci/build-ffmpeg.sh /tmp/ffdist
+          cp LICENSE-ffmpeg.txt /tmp/ffdist/
+          cd /tmp/ffdist
+          tar -czf "$OLDPWD/${{ matrix.artifact }}.tar.gz" .
+
+      - name: Upload ffmpeg bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error

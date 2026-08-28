@@ -90,9 +90,12 @@ representative frame is extracted and run through the same face/vision/
 quality pipeline as a still image, and container metadata (creation
 date, duration, and GPS — including the ISO-6709 location tag iPhone/
 QuickTime `.mov` files use) is read the same way EXIF is for photos.
-Requires `ffmpeg`/`ffprobe` to be on `PATH` (or bundled next to the
-binary); if neither is found, video files are skipped with a one-line
-note printed at startup, and everything else still runs normally.
+The release archives bundle a minimal static LGPL `ffmpeg`/`ffprobe`
+next to the binary (built from source by `ci/build-ffmpeg.sh`), so video
+indexing works out of the box. As a fallback, `ffmpeg`/`ffprobe` on
+`PATH` is used if the bundled copies are removed; if neither is found,
+video files are skipped with a one-line note printed at startup, and
+everything else still runs normally.
 
 Single static binary for the still-image and RAW paths, no runtime to
 install. Face detection/recognition
@@ -273,11 +276,10 @@ platforms. The illumos binary is built by hand with
 `illumos/cs-imageindex_omnios_1a.sh` and uploaded to the same release
 separately (`gh release upload <tag> cs-imageindex-illumos.amd64.tar.gz`).
 
-Note: the CI-built Linux/Windows/macOS binaries do not currently bundle
-`ffmpeg`/`ffprobe` — video files are skipped on those platforms unless
-the user has `ffmpeg` installed and on `PATH` (see Supported formats
-above). Bundling static `ffmpeg` binaries into those release archives is
-a planned follow-up, not yet implemented.
+The CI-built Linux/Windows/macOS release archives bundle a minimal
+static LGPL `ffmpeg`/`ffprobe` (built from source by `ci/build-ffmpeg.sh`),
+so video indexing works out of the box; the illumos release archive
+bundles the same. See `LICENSE-ffmpeg.txt` for the FFmpeg LGPL notice.
 
 Release asset names follow the napp-it CS Tools convention
 (`<asset>-<platform>.<arch>.tar.gz`, e.g. `cs-imageindex-linux.amd64.tar.gz`)

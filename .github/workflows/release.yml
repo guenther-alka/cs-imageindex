@@ -32,21 +32,33 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: cs-imageindex-linux.amd64
             bin: cs-imageindex
+            ffp: linux
+            ffa: amd64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: cs-imageindex-mswin.amd64
             bin: cs-imageindex.exe
+            ffp: mswin
+            ffa: amd64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: cs-imageindex-darwin.arm64
             bin: cs-imageindex
-          - os: macos-latest
+            ffp: darwin
+            ffa: arm64
+          - os: macos-13
             target: x86_64-apple-darwin
             artifact: cs-imageindex-darwin.amd64
             bin: cs-imageindex
-            cross: true
+            ffp: darwin
+            ffa: amd64
 
     runs-on: ${{ matrix.os }}
+    env:
+      # tag whose release carries the prebuilt ffmpeg/ffprobe assets
+      # (cs-imageindex-ffmpeg-<platform>.<arch>.tar.gz, built once by
+      # .github/workflows/ffmpeg-build.yml)
+      FFMPEG_ASSET_TAG: v0.3.0
 
     steps:
       - uses: actions/checkout@v4
@@ -68,13 +80,23 @@ jobs:
         # any binary a user builds themselves with libheif >= 1.23 present.
         run: cargo build --release --target ${{ matrix.target }} --no-default-features
 
+      # ---- bundle the prebuilt static LGPL ffmpeg/ffprobe into dist/ -------
+      # (built once by .github/workflows/ffmpeg-build.yml, stored on the
+      # FFMPEG_ASSET_TAG release as cs-imageindex-ffmpeg-<platform>.<arch>.tar.gz)
+      - name: Bundle ffmpeg (prebuilt LGPL asset)
+        run: |
+          set -e
+          mkdir -p dist
+          curl -sSL "https://github.com/guenther-alka/cs-imageindex/releases/download/${FFMPEG_ASSET_TAG}/cs-imageindex-ffmpeg-${{ matrix.ffp }}.${{ matrix.ffa }}.tar.gz" -o /tmp/ffmpeg-bundle.tar.gz
+          tar -xzf /tmp/ffmpeg-bundle.tar.gz -C dist
+
       - name: Package
         shell: bash
         run: |
           set -e
           mkdir -p dist
           cp target/${{ matrix.target }}/release/${{ matrix.bin }} dist/
-          cp README.md LICENSE dist/
+          cp README.md LICENSE LICENSE-ffmpeg.txt dist/
           mkdir -p dist/models
           cp models/*.onnx models/LICENSE-*.txt dist/models/
           cd dist
@@ -108,11 +130,13 @@ jobs:
           body: |
             Prebuilt binaries for Linux, Windows and macOS (arm64 + x86_64),
             built automatically by this workflow. These builds support still
-            images, RAW photos, and video (given ffmpeg on PATH), but NOT
-            HEIC/HEIF -- the GitHub-hosted runners don't provide a system
-            libheif >= 1.23, so these binaries are built with
-            --no-default-features. Build from source with libheif installed
-            for HEIC support on these platforms.
+            images, RAW photos, and video -- a minimal static LGPL
+            ffmpeg/ffprobe is bundled in each archive (built from source by
+            ci/build-ffmpeg.sh), so video indexing works out of the box.
+            HEIC/HEIF is NOT supported in these CI builds -- the GitHub-hosted
+            runners don't provide a system libheif >= 1.23, so the binaries
+            are built with --no-default-features. Build from source with
+            libheif installed for HEIC support on these platforms.
 
             illumos/OmniOS is NOT built by CI (GitHub Actions has no runner
             for illumos) -- built manually via
