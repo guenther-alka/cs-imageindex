@@ -306,6 +306,24 @@ including the two real bugs found and fixed along the way
 (image-format-by-extension, missing EXIF-orientation
 handling).
 
+## Security & privacy notes
+
+- **Vision privacy**: with a cloud/compatible provider (provider3, DeepSeek,
+  OpenAI, ...) every photo is sent as a base64 JPEG to the configured
+  endpoint -- private images leave the machine. For fully-local processing
+  use a local Ollama endpoint (`--ollama http://127.0.0.1:11434`); `--no-vision`
+  skips scene descriptions entirely (location + faces only).
+- **API key handling**: prefer `--config <file>` or the
+  `CS_IMAGEINDEX_API_KEY` environment variable. `--api-key` on the command
+  line is visible in the process list (`ps`/Process Explorer).
+- **Directory symlinks are not followed** during the scan (a symlink cycle
+  would otherwise make the walk grow without bound); file symlinks are
+  indexed as leaf nodes. The scan is also depth-capped (64 levels).
+- **The index CSV is consumed by Excel/scripts**: cell values starting with
+  `=`, `+`, `-` or `@` are written verbatim (the `file` column is used as a
+  path and must stay verbatim). Open generated CSVs in a text editor or a
+  data tool rather than double-clicking in a spreadsheet application.
+
 ## License
 
 BSD 2-Clause — same as napp-it CS's other standalone tools (cs-sync,

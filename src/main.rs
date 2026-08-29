@@ -555,15 +555,32 @@ fn main() {
 
 fn walkdir(root: &PathBuf) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut stack = vec![root.clone()];
-    while let Some(dir) = stack.pop() {
+    let mut stack = vec![(root.clone(), 0usize)];
+    const MAX_DEPTH: usize = 64;   // audit B1: bound pathological trees
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
             let p = e.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else {
+            // file_type() is lstat-based (does NOT follow symlinks)
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() && !ft.is_symlink() {
+                // real directory -> recurse. Directory symlinks are NOT
+                // followed: a symlink cycle (dir -> ancestor) would otherwise
+                // grow the walk stack without bound, and a symlink escaping
+                // the root would index content outside the scanned folder.
+                stack.push((p, depth + 1));
+            } else if ft.is_file() {
                 out.push(p);
+            } else if ft.is_symlink() {
+                // file symlink -> index the link (leaf node, no recursion
+                // risk); directory symlink -> skip entirely.
+                match std::fs::metadata(&p) {
+                    Ok(m) if m.is_dir() => (),
+                    _ => out.push(p),
+                }
             }
         }
     }
