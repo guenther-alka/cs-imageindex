@@ -110,6 +110,25 @@ struct Args {
     /// Print an example --config file and exit
     #[arg(long)]
     print_config_example: bool,
+
+    /// Comma-separated folder names to skip entirely during the scan
+    /// (matched case-insensitively against a directory's own name, at any
+    /// depth -- the whole subtree under a match is not walked and nothing
+    /// under it appears in the output). Use this to keep an indexer's own
+    /// output folders out of its own index, e.g.
+    /// --exclude _index,_selections
+    #[arg(long, default_value = "")]
+    exclude: String,
+
+    /// Rotate to a new numbered CSV file every N data rows instead of one
+    /// unbounded --out file, to keep per-file size/parse cost bounded on
+    /// very large collections. Chunk files are named
+    /// "<out-stem>_NNN.csv" (zero-padded, e.g. index_001.csv, index_002.csv,
+    /// ...) in the same directory as --out; --out itself is never written
+    /// when rotation is active. 0 disables rotation (writes exactly to
+    /// --out, the old single-file behavior).
+    #[arg(long, default_value_t = 20000)]
+    rotate_rows: usize,
 }
 
 fn resolve_vision_config(args: &Args) -> VisionConfig {
@@ -407,8 +426,18 @@ fn main() {
         Vec::new()
     };
 
+    let excludes: Vec<String> = args
+        .exclude
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !excludes.is_empty() {
+        println!("excluding folder(s) from scan: {}", excludes.join(", "));
+    }
+
     let mut files: Vec<PathBuf> = Vec::new();
-    for entry in walkdir(&folder) {
+    for entry in walkdir(&folder, &excludes) {
         if media::is_supported(&entry) {
             files.push(entry);
         }
@@ -425,30 +454,55 @@ fn main() {
         );
     }
 
-    // --resume: skip files already present in an existing output CSV.
-    let append_mode = args.resume && out.exists();
+    let rotate = args.rotate_rows > 0;
+
+    // --resume: skip files already present in an existing output CSV (or,
+    // with rotation active, in ANY existing "<stem>_NNN.csv" chunk).
+    let existing_chunks = if rotate { find_existing_chunks(&out) } else { Vec::new() };
+    let append_mode = args.resume && (if rotate { !existing_chunks.is_empty() } else { out.exists() });
+    // With rotation: row count already sitting in the last (highest-numbered)
+    // chunk, so writing knows whether to keep filling it or start a fresh one.
+    let mut last_chunk_rows: usize = 0;
     if append_mode {
-        if let Ok(mut rdr) = csv::Reader::from_path(&out) {
-            let mut already_done = std::collections::HashSet::new();
-            for record in rdr.records().flatten() {
-                if let Some(f) = record.get(0) {
-                    already_done.insert(f.to_string());
-                }
-            }
-            let before = files.len();
-            files.retain(|p| {
-                let rel = p.strip_prefix(&folder).unwrap_or(p).to_string_lossy().to_string();
-                !already_done.contains(&rel)
-            });
-            println!(
-                "--resume: {} already indexed in {}, {} remaining",
-                before - files.len(),
-                out.display(),
-                files.len()
-            );
+        let scan_paths: Vec<PathBuf> = if rotate {
+            existing_chunks.iter().map(|(_, p)| p.clone()).collect()
         } else {
-            eprintln!("WARNING: --resume given but {} could not be read as CSV -- starting fresh", out.display());
+            vec![out.clone()]
+        };
+        let mut already_done = std::collections::HashSet::new();
+        let mut read_err = false;
+        for (i, p) in scan_paths.iter().enumerate() {
+            match csv::Reader::from_path(p) {
+                Ok(mut rdr) => {
+                    let mut n = 0usize;
+                    for record in rdr.records().flatten() {
+                        if let Some(f) = record.get(0) {
+                            already_done.insert(f.to_string());
+                        }
+                        n += 1;
+                    }
+                    if rotate && i == scan_paths.len() - 1 {
+                        last_chunk_rows = n;
+                    }
+                }
+                Err(_) => read_err = true,
+            }
         }
+        if read_err {
+            eprintln!("WARNING: --resume given but not every existing chunk could be read as CSV -- indexed-file list may be incomplete");
+        }
+        let before = files.len();
+        files.retain(|p| {
+            let rel = p.strip_prefix(&folder).unwrap_or(p).to_string_lossy().to_string();
+            !already_done.contains(&rel)
+        });
+        println!(
+            "--resume: {} already indexed ({} chunk file(s) under {}), {} remaining",
+            before - files.len(),
+            scan_paths.len(),
+            out.parent().map(|p| p.display().to_string()).unwrap_or_default(),
+            files.len()
+        );
     }
 
     // Thread pool: default kept modest (<=4) so vision-API/Nominatim calls
@@ -504,22 +558,52 @@ fn main() {
     };
     let dup_sizes = dedup::group_sizes(&dup_groups);
 
-    let out_file = if append_mode {
-        std::fs::OpenOptions::new().append(true).open(&out).expect("cannot open output CSV for append")
-    } else {
-        std::fs::File::create(&out).expect("cannot create output CSV")
-    };
-    let mut w = csv::Writer::from_writer(out_file);
-    if !append_mode {
-        w.write_record(CSV_HEADER).unwrap();
+    // --rotate-rows: figure out which chunk number/file to start writing
+    // into. A --resume run continues filling the last existing chunk (in
+    // append mode) if it still has room; otherwise (or without --resume)
+    // rotation starts a fresh chunk family at 001, clearing any stale
+    // chunk files left over from a differently-sized earlier run.
+    let mut chunk_no: usize = 1;
+    let mut rows_in_chunk: usize = 0;
+    let mut continuing_existing = false;
+    if rotate {
+        if append_mode {
+            let last_n = existing_chunks.last().map(|(n, _)| *n).unwrap_or(0);
+            if last_n > 0 && last_chunk_rows < args.rotate_rows {
+                chunk_no = last_n;
+                rows_in_chunk = last_chunk_rows;
+                continuing_existing = true;
+            } else {
+                chunk_no = last_n + 1;
+            }
+        } else {
+            for (_, p) in &existing_chunks {
+                let _ = std::fs::remove_file(p);
+            }
+        }
     }
 
+    let (mut w, mut cur_path) =
+        open_chunk_writer(&out, rotate, chunk_no, if rotate { continuing_existing } else { append_mode });
+    let mut chunks_written: Vec<PathBuf> = vec![cur_path.clone()];
+
     for (rec, &group) in rows.iter().zip(dup_groups.iter()) {
+        if rotate && rows_in_chunk >= args.rotate_rows {
+            w.flush().ok();
+            chunk_no += 1;
+            let (nw, np) = open_chunk_writer(&out, rotate, chunk_no, false);
+            w = nw;
+            cur_path = np;
+            chunks_written.push(cur_path.clone());
+            rows_in_chunk = 0;
+        }
+
         if let Some(err) = &rec.error {
             let mut row = vec![rec.rel_path.clone(), rec.media_type.to_string()];
             row.extend(std::iter::repeat(String::new()).take(18));
             row.push(err.clone());
             w.write_record(&row).unwrap();
+            rows_in_chunk += 1;
             continue;
         }
         let dup_str = if group != 0 && dup_sizes[group] > 1 { group.to_string() } else { String::new() };
@@ -547,13 +631,187 @@ fn main() {
             &rec.vres.description,
         ])
         .unwrap();
+        rows_in_chunk += 1;
     }
     w.flush().ok();
 
-    println!("done -- index written to {}", out.display());
+    if rotate {
+        let names: Vec<String> = chunks_written
+            .iter()
+            .filter_map(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .collect();
+        println!(
+            "done -- index written to {} chunk file(s) under {}: {}",
+            chunks_written.len(),
+            out.parent().map(|p| p.display().to_string()).unwrap_or_default(),
+            names.join(", ")
+        );
+    } else {
+        println!("done -- index written to {}", out.display());
+    }
+
+    write_facets(&out, rotate);
 }
 
-fn walkdir(root: &PathBuf) -> Vec<PathBuf> {
+/// Aggregate the FULL merged index (every chunk file, or the single --out
+/// file if rotation is off) into "<dir>/facets.csv" -- a small
+/// (dimension,value,count) lookup table of the values actually present in
+/// the index, for a UI (Media Selection) to offer as pick-lists instead of
+/// free-text guessing. Recomputed from scratch every run (cheap relative to
+/// indexing itself: just a re-parse of already-written CSV text), so it
+/// always reflects the complete index, including rows a --resume run left
+/// untouched. One row per --out family, so callers don't need to know
+/// about chunking to find it.
+fn write_facets(out: &std::path::Path, rotate: bool) {
+    let paths: Vec<PathBuf> = if rotate {
+        find_existing_chunks(out).into_iter().map(|(_, p)| p).collect()
+    } else if out.exists() {
+        vec![out.to_path_buf()]
+    } else {
+        Vec::new()
+    };
+    if paths.is_empty() {
+        return;
+    }
+
+    const DIMS: [&str; 5] = ["media_type", "date_month", "place", "camera", "resolution"];
+    let mut counts: std::collections::BTreeMap<&'static str, std::collections::HashMap<String, usize>> =
+        DIMS.iter().map(|d| (*d, std::collections::HashMap::new())).collect();
+
+    for p in &paths {
+        let Ok(mut rdr) = csv::Reader::from_path(p) else { continue };
+        for record in rdr.records().flatten() {
+            let get = |i: usize| record.get(i).unwrap_or("").trim().to_string();
+            let media_type = get(1);
+            let date_taken = get(2);
+            let place = get(5);
+            let camera = get(6);
+            let resolution = get(7);
+
+            if !media_type.is_empty() {
+                *counts.get_mut("media_type").unwrap().entry(media_type).or_insert(0) += 1;
+            }
+            if let Some(ym) = year_month(&date_taken) {
+                *counts.get_mut("date_month").unwrap().entry(ym).or_insert(0) += 1;
+            }
+            if !place.is_empty() {
+                *counts.get_mut("place").unwrap().entry(place).or_insert(0) += 1;
+            }
+            if !camera.is_empty() {
+                *counts.get_mut("camera").unwrap().entry(camera).or_insert(0) += 1;
+            }
+            if !resolution.is_empty() {
+                *counts.get_mut("resolution").unwrap().entry(resolution).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let facets_path = out.parent().map(|p| p.join("facets.csv")).unwrap_or_else(|| PathBuf::from("facets.csv"));
+    let f = match std::fs::File::create(&facets_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("WARNING: could not write {}: {e}", facets_path.display());
+            return;
+        }
+    };
+    let mut fw = csv::Writer::from_writer(f);
+    fw.write_record(["dimension", "value", "count"]).ok();
+    for (dim, values) in &counts {
+        let mut items: Vec<(&String, &usize)> = values.iter().collect();
+        // most-common first; alphabetical as a stable tiebreaker
+        items.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        for (value, count) in items {
+            fw.write_record([*dim, value.as_str(), &count.to_string()]).ok();
+        }
+    }
+    fw.flush().ok();
+    println!("facets written to {}", facets_path.display());
+}
+
+/// "2026:08:30 14:02:11" or "2026-08-30 14:02:11" (EXIF display_value()
+/// formatting has varied historically) -> Some("2026-08") ; None if the
+/// leading characters don't look like a date at all (empty/unparseable
+/// EXIF date).
+fn year_month(dt: &str) -> Option<String> {
+    let b = dt.as_bytes();
+    if b.len() >= 7
+        && b[0..4].iter().all(|c| c.is_ascii_digit())
+        && (b[4] == b'-' || b[4] == b':')
+        && b[5..7].iter().all(|c| c.is_ascii_digit())
+    {
+        Some(format!("{}-{}", &dt[0..4], &dt[5..7]))
+    } else {
+        None
+    }
+}
+
+// --rotate-rows: chunk file naming/discovery helpers.
+//
+// Chunk family for a given --out path (e.g. "_index/index.csv") is every
+// "<dir>/<stem>_NNN.csv" (NNN = zero-padded number, 3+ digits). --out's own
+// literal path is never written while rotation is active -- only the
+// numbered chunks are.
+fn chunk_stem(out: &std::path::Path) -> String {
+    out.file_stem().and_then(|s| s.to_str()).unwrap_or("index").to_string()
+}
+
+fn chunk_path(out: &std::path::Path, n: usize) -> PathBuf {
+    let dir = out.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    dir.join(format!("{}_{:03}.csv", chunk_stem(out), n))
+}
+
+/// Existing "<stem>_NNN.csv" chunk files next to --out, sorted ascending by
+/// NNN. Returns (n, path) pairs.
+fn find_existing_chunks(out: &std::path::Path) -> Vec<(usize, PathBuf)> {
+    let dir = match out.parent() {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let stem = chunk_stem(out);
+    let prefix = format!("{stem}_");
+    let mut found: Vec<(usize, PathBuf)> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return found };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(rest) = name.strip_prefix(&prefix) else { continue };
+        let Some(num_part) = rest.strip_suffix(".csv") else { continue };
+        if let Ok(n) = num_part.parse::<usize>() {
+            found.push((n, e.path()));
+        }
+    }
+    found.sort_by_key(|(n, _)| *n);
+    found
+}
+
+/// Open (create, or append to an existing file) the CSV writer for one
+/// output chunk. With rotation off, `path` is always the literal --out
+/// path; with rotation on, it's chunk_path(out, chunk_no). A header row is
+/// written only when NOT appending (fresh/new file).
+fn open_chunk_writer(
+    out: &std::path::Path,
+    rotate: bool,
+    chunk_no: usize,
+    append: bool,
+) -> (csv::Writer<std::fs::File>, PathBuf) {
+    let path = if rotate { chunk_path(out, chunk_no) } else { out.to_path_buf() };
+    let f = if append {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("cannot open output CSV for append")
+    } else {
+        std::fs::File::create(&path).expect("cannot create output CSV")
+    };
+    let mut w = csv::Writer::from_writer(f);
+    if !append {
+        w.write_record(CSV_HEADER).unwrap();
+    }
+    (w, path)
+}
+
+fn walkdir(root: &PathBuf, excludes: &[String]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![(root.clone(), 0usize)];
     const MAX_DEPTH: usize = 64;   // audit B1: bound pathological trees
@@ -567,6 +825,16 @@ fn walkdir(root: &PathBuf) -> Vec<PathBuf> {
             // file_type() is lstat-based (does NOT follow symlinks)
             let Ok(ft) = e.file_type() else { continue };
             if ft.is_dir() && !ft.is_symlink() {
+                // --exclude: skip this directory's whole subtree (matched
+                // case-insensitively by directory name, at any depth) --
+                // e.g. an indexer's own _index/_selections output folders.
+                if !excludes.is_empty() {
+                    if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                        if excludes.iter().any(|ex| ex == &name.to_lowercase()) {
+                            continue;
+                        }
+                    }
+                }
                 // real directory -> recurse. Directory symlinks are NOT
                 // followed: a symlink cycle (dir -> ancestor) would otherwise
                 // grow the walk stack without bound, and a symlink escaping
